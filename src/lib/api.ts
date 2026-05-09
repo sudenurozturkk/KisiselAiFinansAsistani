@@ -2,9 +2,14 @@
 import { getUserId } from "./userId";
 import type {
   TransactionsResponse,
-  ProductsResponse,
+  WishlistResponse,
+  WishlistItem,
+  WishlistAnalysis,
   ChatResponse,
   RecommendationsResponse,
+  SubscriptionsResponse,
+  CSVImportResult,
+  ReceiptScanResult,
   UserProfile,
   Transaction,
   ChatMessage,
@@ -67,12 +72,23 @@ export const api = {
   deleteTransaction: (id: string) =>
     call<{ ok: boolean }>(`/api/transactions/${id}`, { method: "DELETE" }),
 
-  // Ürünler
-  getProducts: () => call<ProductsResponse>("/api/products"),
-  buyProduct: (productId: string, installments = 1) =>
-    call("/api/products/buy", {
+  // İstek Listesi (Wishlist)
+  getWishlist: () => call<WishlistResponse>("/api/wishlist"),
+  addWishlistItem: (item: Partial<WishlistItem>) =>
+    call<{ item: WishlistItem }>("/api/wishlist", {
       method: "POST",
-      body: JSON.stringify({ productId, installments }),
+      body: JSON.stringify(item),
+    }),
+  updateWishlistItem: (id: string, patch: Partial<WishlistItem>) =>
+    call<{ item: WishlistItem }>(`/api/wishlist/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  deleteWishlistItem: (id: string) =>
+    call<{ ok: boolean }>(`/api/wishlist/${id}`, { method: "DELETE" }),
+  analyzeWishlist: () =>
+    call<{ analysis: WishlistAnalysis }>("/api/wishlist/analyze", {
+      method: "POST",
     }),
 
   // Sohbet (Agentic AI)
@@ -103,6 +119,36 @@ export const api = {
     call<{ explanation: string }>("/api/literacy", {
       method: "POST",
       body: JSON.stringify({ action: "explain", concept, level }),
+    }),
+
+  // Fiş Tarama (Vision AI)
+  scanReceipt: (imageBase64: string, mimeType = "image/jpeg") =>
+    call<{ receipt: ReceiptScanResult }>("/api/vision/receipt", {
+      method: "POST",
+      body: JSON.stringify({ image: imageBase64, mimeType }),
+    }),
+
+  // Abonelik Yönetimi (Manuel Giriş)
+  getSubscriptions: () =>
+    call<SubscriptionsResponse>("/api/subscriptions"),
+  addSubscription: (sub: { name: string; amount: number; frequency?: string; category?: string; nextPaymentDate?: string; note?: string }) =>
+    call<{ subscription: import("./types").Subscription }>("/api/subscriptions", {
+      method: "POST",
+      body: JSON.stringify(sub),
+    }),
+  updateSubscription: (id: string, patch: Record<string, unknown>) =>
+    call<{ subscription: import("./types").Subscription }>(`/api/subscriptions/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  deleteSubscription: (id: string) =>
+    call<{ ok: boolean }>(`/api/subscriptions/${id}`, { method: "DELETE" }),
+
+  // Banka Ekstresi İçe Aktarma (CSV)
+  importCSV: (csvText: string) =>
+    call<CSVImportResult>("/api/import", {
+      method: "POST",
+      body: JSON.stringify({ csvText }),
     }),
 
   // Yönetim

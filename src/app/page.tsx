@@ -7,13 +7,18 @@ import {
   IncomeExpenseLine,
   SpendingPie,
 } from "@/components/Charts";
-import { formatTRY } from "@/lib/finance";
+import { formatTRY, calculateHealthScore } from "@/lib/finance";
+import type { HealthScoreResult } from "@/lib/finance";
 import {
   ArrowDownRight,
   ArrowUpRight,
   PiggyBank,
   Wallet,
   AlertTriangle,
+  Heart,
+  TrendingUp,
+  TrendingDown,
+  Minus,
 } from "lucide-react";
 import Link from "next/link";
 import InsightsRow from "@/components/Insights";
@@ -53,20 +58,13 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="card space-y-2">
-              <Skeleton className="h-4 w-24" />
-              <Skeleton className="h-8 w-20" />
-            </div>
-          ))}
-        </div>
       </div>
     );
 
   const s = data.summary;
   const insights = data.insights || [];
   const anomalies = data.anomalies || [];
+  const healthScore = calculateHealthScore(s, user, anomalies.length);
   const goalProgress =
     user.savingsGoal > 0
       ? Math.round(
@@ -93,7 +91,13 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <InsightsRow insights={insights} />
+      {/* Finansal Sağlık Skoru + Insights */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <HealthScoreGauge score={healthScore} />
+        <div className="lg:col-span-3">
+          <InsightsRow insights={insights} />
+        </div>
+      </div>
 
       <BudgetAlert
         used={s.thisMonth.expense}
@@ -243,6 +247,129 @@ export default function DashboardPage() {
           </ul>
         </div>
       </section>
+    </div>
+  );
+}
+
+/* ─── Health Score Gauge Component ───────────────────────────── */
+
+function HealthScoreGauge({ score }: { score: HealthScoreResult }) {
+  const { overall, grade, trend, aiSummary, components } = score;
+  const circumference = 2 * Math.PI * 54;
+  const progress = (overall / 100) * circumference;
+  const offset = circumference - progress;
+
+  const gradeColor =
+    overall >= 80
+      ? "text-emerald-600"
+      : overall >= 60
+        ? "text-amber-600"
+        : "text-rose-600";
+
+  const strokeColor =
+    overall >= 80
+      ? "#059669"
+      : overall >= 60
+        ? "#d97706"
+        : "#dc2626";
+
+  const TrendIcon =
+    trend === "improving"
+      ? TrendingUp
+      : trend === "declining"
+        ? TrendingDown
+        : Minus;
+
+  const trendColor =
+    trend === "improving"
+      ? "text-emerald-600"
+      : trend === "declining"
+        ? "text-rose-600"
+        : "text-slate-500";
+
+  return (
+    <div className="card !p-4 flex flex-col items-center justify-center">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Heart size={16} className="text-brand-600" />
+        <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+          Finansal Sağlık
+        </span>
+      </div>
+
+      {/* SVG Gauge */}
+      <div className="relative w-32 h-32">
+        <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
+          <circle
+            cx="60"
+            cy="60"
+            r="54"
+            stroke="#e2e8f0"
+            strokeWidth="8"
+            fill="none"
+          />
+          <circle
+            cx="60"
+            cy="60"
+            r="54"
+            stroke={strokeColor}
+            strokeWidth="8"
+            fill="none"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            className="transition-all duration-1000 ease-out"
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className={`text-3xl font-bold ${gradeColor}`}>{grade}</span>
+          <span className="text-sm text-slate-500">{overall}/100</span>
+        </div>
+      </div>
+
+      {/* Trend */}
+      <div className={`flex items-center gap-1 mt-2 text-xs font-medium ${trendColor}`}>
+        <TrendIcon size={14} />
+        {trend === "improving"
+          ? "İyileşiyor"
+          : trend === "declining"
+            ? "Kötüleşiyor"
+            : "Stabil"}
+      </div>
+
+      {/* AI Summary */}
+      <div className="text-[11px] text-slate-500 text-center mt-2 leading-relaxed">
+        {aiSummary}
+      </div>
+
+      {/* Component Bars */}
+      <div className="w-full mt-3 space-y-1.5">
+        {[
+          { label: "Bütçe", value: components.budgetAdherence },
+          { label: "Tasarruf", value: components.savingsRate },
+          { label: "Stabilite", value: components.spendingStability },
+          { label: "Risk", value: components.debtRisk },
+          { label: "Çeşitlilik", value: components.diversification },
+        ].map((c) => (
+          <div key={c.label} className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500 w-14 text-right shrink-0">
+              {c.label}
+            </span>
+            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ${
+                  c.value >= 70
+                    ? "bg-emerald-500"
+                    : c.value >= 40
+                      ? "bg-amber-500"
+                      : "bg-rose-500"
+                }`}
+                style={{ width: `${Math.min(c.value, 100)}%` }}
+              />
+            </div>
+            <span className="text-[10px] text-slate-400 w-6">{c.value}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

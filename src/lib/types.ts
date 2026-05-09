@@ -55,32 +55,47 @@ export interface ChatMessage {
   createdAt: string;
 }
 
-/* ─── Ürün ──────────────────────────────────────────────────── */
-export type ProductBadge = "yeni" | "firsat" | "populer" | "eko" | "sinirli";
-
-export interface Product {
-  id: string;
+/* ─── İstek Listesi (Wishlist) ──────────────────────────────── */
+export interface WishlistItem {
+  _id: string;
+  userId: string;
   name: string;
-  brand: string;
+  url?: string;
+  imageUrl?: string;
+  price?: number;
+  estimatedPrice?: number;
   category: Category;
-  price: number;
-  oldPrice?: number;
-  image: string;
-  description: string;
-  installments: number[];
-  rating: number;
-  reviewCount: number;
-  badges?: ProductBadge[];
-  tags?: string[];
+  priority: 1 | 2 | 3 | 4 | 5;
+  urgency: "ihtiyaç" | "istek" | "hobi" | "acil";
+  status: "wishlist" | "purchased" | "cancelled";
+  note?: string;
+  purchasedAt?: string;
+  purchasedPrice?: number;
+  aiAnalysis?: string;
+  createdAt: string;
 }
 
-export interface EnrichedProduct extends Product {
-  affordableNow: boolean;
-  recommendedInstallment: number;
-  monthly: number;
-  advice: string;
-  riskLevel: "low" | "medium" | "high";
-  budgetImpactPct: number;
+export interface WishlistAnalysis {
+  prioritizedItems: {
+    itemId: string;
+    name: string;
+    recommendedAction: "buy_now" | "wait" | "skip" | "find_alternative";
+    reason: string;
+    alternativeSuggestion?: string;
+    estimatedSavings?: number;
+  }[];
+  budgetPlan: string;
+  totalEstimatedCost: number;
+  affordableThisMonth: number;
+  summary: string;
+}
+
+export interface WishlistResponse {
+  items: WishlistItem[];
+  totalEstimated: number;
+  purchasedTotal: number;
+  wishlistCount: number;
+  purchasedCount: number;
 }
 
 /* ─── Insight ───────────────────────────────────────────────── */
@@ -186,15 +201,6 @@ export interface TransactionsResponse {
   anomalies?: SpendingAnomaly[];
 }
 
-/* ─── Products API Response ─────────────────────────────────── */
-export interface ProductsResponse {
-  products: EnrichedProduct[];
-  context: {
-    remainingBudget: number;
-    summary?: import("@/lib/finance").FinanceSummary;
-    user?: UserProfile;
-  };
-}
 
 /* ─── Chat API Response ─────────────────────────────────────── */
 export interface ChatResponse {
@@ -211,4 +217,76 @@ export interface RecommendationsResponse {
   insights: Insight[];
   anomalies: SpendingAnomaly[];
   user: UserProfile;
+}
+
+/* ─── Fiş Tarama (Vision AI) ────────────────────────────────── */
+export interface ReceiptItem {
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
+export interface ReceiptScanResult {
+  storeName: string;
+  date: string;
+  totalAmount: number;
+  category: Category;
+  items: ReceiptItem[];
+  currency: string;
+  confidence: number;
+}
+
+/* ─── Abonelik Yönetimi ─────────────────────────────────────── */
+export interface Subscription {
+  _id: string;
+  userId: string;
+  name: string;
+  amount: number;
+  frequency: "haftalık" | "aylık" | "yıllık";
+  category: Category;
+  nextPaymentDate?: string;
+  note?: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface SubscriptionsResponse {
+  subscriptions: Subscription[];
+  totalMonthly: number;
+  totalYearly: number;
+  activeCount: number;
+}
+
+/* ─── CSV İçe Aktarma ───────────────────────────────────────── */
+export interface CSVImportRow {
+  date: string;
+  description: string;
+  amount: number;
+  type: "gelir" | "gider";
+  category: Category;
+  confidence: number;
+  originalLine: string;
+}
+
+export interface CSVImportResult {
+  rows: CSVImportRow[];
+  totalIncome: number;
+  totalExpense: number;
+  categorySummary: { category: Category; count: number; total: number }[];
+}
+
+/* ─── Finansal Sağlık Skoru ─────────────────────────────────── */
+export interface HealthScore {
+  overall: number; // 0-100
+  components: {
+    budgetAdherence: number;
+    savingsRate: number;
+    spendingStability: number;
+    debtRisk: number;
+    diversification: number;
+  };
+  grade: "A+" | "A" | "B+" | "B" | "C" | "D" | "F";
+  trend: "improving" | "stable" | "declining";
+  aiSummary: string;
 }

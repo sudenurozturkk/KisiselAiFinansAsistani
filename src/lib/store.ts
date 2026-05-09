@@ -1,16 +1,18 @@
 // In-memory fallback store. Used when MONGODB_URI is not set.
-import type { ChatMessage, Transaction, UserProfile } from "./types";
+import type { ChatMessage, Transaction, UserProfile, WishlistItem, Subscription } from "./types";
 
 interface MemoryDB {
   users: Map<string, UserProfile>;
   transactions: Transaction[];
   messages: ChatMessage[];
+  wishlist: WishlistItem[];
+  subscriptions: Subscription[];
 }
 
 const g = globalThis as unknown as { __memdb?: MemoryDB };
 
 function defaultDB(): MemoryDB {
-  return { users: new Map(), transactions: [], messages: [] };
+  return { users: new Map(), transactions: [], messages: [], wishlist: [], subscriptions: [] };
 }
 
 export const memdb: MemoryDB = g.__memdb || (g.__memdb = defaultDB());

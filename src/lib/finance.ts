@@ -163,3 +163,146 @@ export function budgetAlertLevel(usedPct: number): "ok" | "warn" | "danger" {
   if (usedPct >= 80) return "warn";
   return "ok";
 }
+
+/* ─── Finansal Sağlık Skoru ─────────────────────────────────── */
+
+export interface HealthScoreResult {
+  overall: number;
+  components: {
+    budgetAdherence: number;
+    savingsRate: number;
+    spendingStability: number;
+    debtRisk: number;
+    diversification: number;
+  };
+  grade: "A+" | "A" | "B+" | "B" | "C" | "D" | "F";
+  trend: "improving" | "stable" | "declining";
+  aiSummary: string;
+}
+
+export function calculateHealthScore(
+  summary: FinanceSummary,
+  user: UserProfile,
+  anomalyCount: number,
+): HealthScoreResult {
+  const { thisMonth, lastMonth, topCategories, savingsRate } = summary;
+
+  // 1. Bütçe Uyumu (0-100): Bütçenin altında kalmak iyi
+  const budgetUsed = thisMonth.budgetUsedPct;
+  const budgetAdherence =
+    budgetUsed <= 80
+      ? 100
+      : budgetUsed <= 100
+        ? Math.round(100 - (budgetUsed - 80) * 2.5)
+        : Math.max(0, Math.round(50 - (budgetUsed - 100) * 2));
+
+  // 2. Tasarruf Oranı (0-100): %20+ tasarruf ideal
+  const savingsScore =
+    savingsRate >= 30
+      ? 100
+      : savingsRate >= 20
+        ? Math.round(80 + (savingsRate - 20) * 2)
+        : savingsRate >= 10
+          ? Math.round(50 + (savingsRate - 10) * 3)
+          : savingsRate >= 0
+            ? Math.round(savingsRate * 5)
+            : 0;
+
+  // 3. Harcama Stabilitesi (0-100): Anomali yoksa iyi
+  const spendingStability = Math.max(0, 100 - anomalyCount * 25);
+
+  // 4. Borç Riski (0-100): Gider/gelir oranı düşük olmalı
+  const expenseRatio =
+    thisMonth.income > 0 ? thisMonth.expense / thisMonth.income : 1;
+  const debtRisk =
+    expenseRatio <= 0.5
+      ? 100
+      : expenseRatio <= 0.7
+        ? Math.round(80 - (expenseRatio - 0.5) * 100)
+        : expenseRatio <= 1.0
+          ? Math.round(60 - (expenseRatio - 0.7) * 200)
+          : 0;
+
+  // 5. Çeşitlilik (0-100): 3+ kategoriye dağılmış harcama iyi
+  const catCount = topCategories.length;
+  const topCatRatio =
+    topCategories.length > 0 && thisMonth.expense > 0
+      ? topCategories[0].amount / thisMonth.expense
+      : 1;
+  const diversification = Math.min(
+    100,
+    Math.round(catCount * 15 + (1 - topCatRatio) * 40),
+  );
+
+  // Ağırlıklı ortalama
+  const overall = Math.round(
+    budgetAdherence * 0.3 +
+      savingsScore * 0.25 +
+      spendingStability * 0.15 +
+      debtRisk * 0.2 +
+      diversification * 0.1,
+  );
+
+  // Not
+  const grade: HealthScoreResult["grade"] =
+    overall >= 90
+      ? "A+"
+      : overall >= 80
+        ? "A"
+        : overall >= 70
+          ? "B+"
+          : overall >= 60
+            ? "B"
+            : overall >= 50
+              ? "C"
+              : overall >= 35
+                ? "D"
+                : "F";
+
+  // Trend: bu ay vs geçen ay
+  const lastExpenseRatio =
+    lastMonth.income > 0 ? lastMonth.expense / lastMonth.income : 1;
+  const trend: HealthScoreResult["trend"] =
+    expenseRatio < lastExpenseRatio - 0.05
+      ? "improving"
+      : expenseRatio > lastExpenseRatio + 0.05
+        ? "declining"
+        : "stable";
+
+  // AI özet
+  const summaryParts: string[] = [];
+  if (budgetAdherence >= 80)
+    summaryParts.push("Bütçe kontrolün harika 👏");
+  else if (budgetAdherence >= 50)
+    summaryParts.push("Bütçeye dikkat etmelisin ⚠️");
+  else summaryParts.push("Bütçe aşımı kritik seviyede 🚨");
+
+  if (savingsScore >= 80)
+    summaryParts.push("Tasarruf alışkanlığın çok sağlıklı 💰");
+  else if (savingsScore >= 40)
+    summaryParts.push("Tasarruf oranını artırabilirsin");
+  else summaryParts.push("Acil tasarruf planı yapmalısın");
+
+  if (anomalyCount > 0)
+    summaryParts.push(
+      `${anomalyCount} kategoride anormal harcama tespit edildi`,
+    );
+
+  if (trend === "improving") summaryParts.push("Genel trend olumlu 📈");
+  else if (trend === "declining")
+    summaryParts.push("Geçen aya göre kötüleşme var 📉");
+
+  return {
+    overall,
+    components: {
+      budgetAdherence,
+      savingsRate: savingsScore,
+      spendingStability,
+      debtRisk,
+      diversification,
+    },
+    grade,
+    trend,
+    aiSummary: summaryParts.join(" • "),
+  };
+}

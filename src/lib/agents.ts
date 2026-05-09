@@ -17,7 +17,7 @@ import type {
 } from "./types";
 import { summarizeFinance, formatTRY, buildInsights } from "./finance";
 import { detectAnomalies } from "./anomaly";
-import { PRODUCTS } from "./products";
+import { listWishlistItems } from "./repo";
 
 /* ─── Agent Tool Definitions (Gemini Function Declarations) ──── */
 
@@ -70,23 +70,15 @@ const toolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
-    name: "compare_products",
+    name: "analyze_wishlist",
     description:
-      "Bütçeye göre ürünleri karşılaştırır. Kategori veya fiyat aralığına göre filtreleme yapar.",
+      "Kullanıcının istek listesindeki ürün ve hizmetleri analiz eder, bütçeye göre önceliklendirir ve alternatif önerir.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
-        category: {
+        focusCategory: {
           type: SchemaType.STRING,
-          description: "Ürün kategorisi",
-        },
-        maxPrice: {
-          type: SchemaType.NUMBER,
-          description: "Maksimum fiyat (TL)",
-        },
-        purpose: {
-          type: SchemaType.STRING,
-          description: "Kullanım amacı",
+          description: "Odaklanılacak kategori (opsiyonel)",
         },
       },
     },
@@ -232,48 +224,38 @@ function executeCalculateSavingsPlan(
   };
 }
 
-function executeCompareProducts(
+async function executeAnalyzeWishlist(
   args: Record<string, unknown>,
   user: UserProfile,
   txs: Transaction[],
-): Record<string, unknown> {
-  const category = args.category as string | undefined;
-  const maxPrice = args.maxPrice as number | undefined;
+): Promise<Record<string, unknown>> {
+  const focusCategory = args.focusCategory as string | undefined;
   const summary = summarizeFinance(txs, user.monthlyBudget);
   const remaining = Math.max(user.monthlyBudget - summary.thisMonth.expense, 0);
+  const items = await listWishlistItems(user.userId);
+  const wishlistItems = items.filter((i) => i.status === "wishlist");
 
-  let filtered = PRODUCTS;
-  if (category) {
-    const q = category.toLowerCase();
-    filtered = filtered.filter(
-      (p) =>
-        p.category.toLowerCase().includes(q) ||
-        p.tags?.some((t) => t.toLowerCase().includes(q)) ||
-        p.name.toLowerCase().includes(q),
-    );
-  }
-  if (maxPrice) {
-    filtered = filtered.filter((p) => p.price <= maxPrice);
+  let filtered = wishlistItems;
+  if (focusCategory) {
+    const q = focusCategory.toLowerCase();
+    filtered = filtered.filter((i) => i.category.toLowerCase().includes(q));
   }
 
-  const compared = filtered.slice(0, 5).map((p) => ({
-    name: p.name,
-    brand: p.brand,
-    price: p.price,
-    oldPrice: p.oldPrice,
-    rating: p.rating,
-    reviewCount: p.reviewCount,
-    affordableNow: p.price <= remaining,
-    bestInstallment: p.installments[p.installments.length - 1] || 1,
-    monthlyWithInstallment: Math.round(p.price / (p.installments[p.installments.length - 1] || 1)),
-    budgetImpact: user.monthlyBudget > 0 ? Math.round((p.price / user.monthlyBudget) * 100) : 0,
-    badges: p.badges,
+  const analyzed = filtered.map((item) => ({
+    name: item.name,
+    price: item.price || item.estimatedPrice || null,
+    priority: item.priority,
+    urgency: item.urgency,
+    category: item.category,
+    note: item.note || null,
+    affordableNow: (item.price || 0) <= remaining,
   }));
 
   return {
-    productsFound: compared.length,
+    itemCount: analyzed.length,
     remainingBudget: remaining,
-    products: compared,
+    totalEstimatedCost: analyzed.reduce((s, i) => s + (i.price || 0), 0),
+    items: analyzed,
   };
 }
 
@@ -386,19 +368,19 @@ function executeFinancialLiteracyExplain(
 
 /* ─── Tool Router ───────────────────────────────────────────── */
 
-function executeTool(
+async function executeTool(
   toolName: string,
   args: Record<string, unknown>,
   txs: Transaction[],
   user: UserProfile,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   switch (toolName) {
     case "analyze_spending":
       return executeAnalyzeSpending(args, txs, user);
     case "calculate_savings_plan":
       return executeCalculateSavingsPlan(args, txs, user);
-    case "compare_products":
-      return executeCompareProducts(args, user, txs);
+    case "analyze_wishlist":
+      return await executeAnalyzeWishlist(args, user, txs);
     case "get_budget_status":
       return executeGetBudgetStatus(txs, user);
     case "predict_month_end":
@@ -473,7 +455,7 @@ export async function runFinanceAgent(
         toolArgs: (fc.args as Record<string, unknown>) || {},
       });
 
-      const result = executeTool(
+      const result = await executeTool(
         fc.name,
         (fc.args as Record<string, unknown>) || {},
         txs,

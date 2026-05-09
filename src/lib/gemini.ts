@@ -16,12 +16,50 @@ import { summarizeFinance, formatTRY } from "./finance";
 import { detectAnomalies } from "./anomaly";
 import { runFinanceAgent } from "./agents";
 
-const apiKey = process.env.GEMINI_API_KEY;
-const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+function getApiKey() {
+  return process.env.GEMINI_API_KEY || "";
+}
+function getModelName() {
+  return process.env.GEMINI_MODEL || "gemini-2.0-flash";
+}
 
-export const isGeminiEnabled = !!apiKey;
+export const isGeminiEnabled = !!getApiKey();
 
-const client = apiKey ? new GoogleGenerativeAI(apiKey) : null;
+function getClient(): GoogleGenerativeAI | null {
+  const key = getApiKey();
+  return key ? new GoogleGenerativeAI(key) : null;
+}
+
+/** Rate-limit aware retry wrapper */
+export async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const is429 = msg.includes("429") || msg.includes("quota") || msg.includes("Too Many Requests");
+      if (is429 && i < retries) {
+        const waitSec = Math.pow(2, i + 1) * 5; // 10s, 20s
+        console.warn(`[gemini] Rate limit — ${waitSec}s beklenip tekrar denenecek (deneme ${i + 2}/${retries + 1})`);
+        await new Promise((r) => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Retry exhausted");
+}
+
+export function friendlyError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("429") || msg.includes("quota")) {
+    return "⏳ AI kota limiti aşıldı. Lütfen birkaç dakika bekleyip tekrar deneyin.";
+  }
+  if (msg.includes("API_KEY") || msg.includes("401") || msg.includes("403")) {
+    return "🔑 API anahtarı geçersiz veya yetkisiz. Lütfen .env.local dosyasını kontrol edin.";
+  }
+  return `AI hatası: ${msg.slice(0, 200)}`;
+}
 
 /* ─── System Prompt ─────────────────────────────────────────── */
 
@@ -87,6 +125,8 @@ export async function generateChatReply(
   history: ChatMessage[],
   userMessage: string,
 ): Promise<{ reply: string; steps: AgentStep[] }> {
+  const client = getClient();
+  const modelName = getModelName();
   if (!client) {
     const reply = mockReply(user, txs, userMessage);
     return { reply, steps: [{ type: "response", content: reply }] };
@@ -99,7 +139,7 @@ export async function generateChatReply(
       content: m.content,
     }));
 
-    const result = await runFinanceAgent(
+    const result = await withRetry(() => runFinanceAgent(
       client,
       modelName,
       systemPrompt,
@@ -107,14 +147,13 @@ export async function generateChatReply(
       userMessage,
       txs,
       user,
-    );
+    ));
 
     return result;
   } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.warn("[gemini-agent] hata, mock yanıta düşülüyor:", errMsg);
-    const reply = mockReply(user, txs, userMessage);
-    return { reply, steps: [{ type: "response", content: reply }] };
+    const errMsg = friendlyError(err);
+    console.error("[gemini-agent] HATA:", errMsg);
+    return { reply: errMsg, steps: [{ type: "response", content: errMsg }] };
   }
 }
 
@@ -139,6 +178,8 @@ JSON formatı (sadece JSON döndür, başka bir şey ekleme):
   }
 ]`;
 
+  const client = getClient();
+  const modelName = getModelName();
   if (!client) {
     return {
       text: mockReply(user, txs, prompt),
@@ -151,8 +192,9 @@ JSON formatı (sadece JSON döndür, başka bir şey ekleme):
       model: modelName,
       systemInstruction: buildSystemPrompt(user, txs),
     });
+    console.log("[gemini] Recommendations: gerçek Gemini API kullanılıyor, model:", modelName);
 
-    const res = await model.generateContent(prompt);
+    const res = await withRetry(() => model.generateContent(prompt));
     const responseText = res.response.text();
 
     // JSON parse etmeyi dene
@@ -176,9 +218,11 @@ JSON formatı (sadece JSON döndür, başka bir şey ekleme):
       .join("\n\n");
 
     return { text: textVersion || responseText, structured };
-  } catch {
+  } catch (err: unknown) {
+    const errMsg = friendlyError(err);
+    console.error("[gemini] Recommendations HATA:", errMsg);
     return {
-      text: mockReply(user, txs, prompt),
+      text: errMsg,
       structured: mockStructuredRecommendations(user, txs),
     };
   }
@@ -190,6 +234,8 @@ export async function generateQuiz(
   topic: string,
   difficulty: string,
 ): Promise<string> {
+  const client = getClient();
+  const modelName = getModelName();
   if (!client) {
     return JSON.stringify(mockQuiz(topic));
   }
@@ -209,9 +255,10 @@ JSON formatında döndür (sadece JSON, başka bir şey ekleme):
   "topic": "${topic}"
 }`;
 
-    const res = await model.generateContent(prompt);
+    const res = await withRetry(() => model.generateContent(prompt));
     return res.response.text();
-  } catch {
+  } catch (err: unknown) {
+    console.error("[gemini] Quiz HATA:", err);
     return JSON.stringify(mockQuiz(topic));
   }
 }
@@ -219,6 +266,8 @@ JSON formatında döndür (sadece JSON, başka bir şey ekleme):
 export async function generateScenarioAnalysis(
   scenario: string,
 ): Promise<string> {
+  const client = getClient();
+  const modelName = getModelName();
   if (!client) {
     return JSON.stringify({
       scenario,
@@ -247,12 +296,13 @@ JSON formatında döndür (sadece JSON):
   "financialImpact": "Finansal etki açıklaması"
 }`;
 
-    const res = await model.generateContent(prompt);
+    const res = await withRetry(() => model.generateContent(prompt));
     return res.response.text();
-  } catch {
+  } catch (err: unknown) {
+    console.error("[gemini] Scenario HATA:", err);
     return JSON.stringify({
       scenario,
-      analysis: "Analiz şu an yapılamadı, lütfen tekrar deneyin.",
+      analysis: `Analiz şu an yapılamadı: ${friendlyError(err)}`,
       risks: [],
       recommendations: [],
       financialImpact: "",
@@ -264,6 +314,8 @@ export async function explainConcept(
   concept: string,
   level: string,
 ): Promise<string> {
+  const client = getClient();
+  const modelName = getModelName();
   if (!client) {
     return `**${concept}** kavramı hakkında bilgi:\n\nBu kavram finansal okuryazarlığın temel taşlarından biridir. (Mock yanıt — GEMINI_API_KEY eklenince gerçek açıklama üretilir.)`;
   }
@@ -275,10 +327,11 @@ Türkiye ekonomisinden somut örnekler ver.
 Markdown formatında, kısa ve öz, anlaşılır bir şekilde yaz.
 Güncel veriler ve gerçekçi senaryolar kullan.`;
 
-    const res = await model.generateContent(prompt);
+    const res = await withRetry(() => model.generateContent(prompt));
     return res.response.text();
-  } catch {
-    return `**${concept}** kavramı hakkında bilgi şu an üretilemedi. Lütfen tekrar deneyin.`;
+  } catch (err: unknown) {
+    console.error("[gemini] Explain HATA:", err);
+    return `**${concept}** kavramı hakkında bilgi şu an üretilemedi: ${friendlyError(err)}`;
   }
 }
 

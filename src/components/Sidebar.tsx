@@ -10,6 +10,7 @@ import {
   Sparkles,
   Wallet,
   Brain,
+  CreditCard,
   type LucideIcon,
 } from "lucide-react";
 import { Avatar, Skeleton } from "./ui";
@@ -24,8 +25,9 @@ interface NavItem {
 
 const items: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/products", label: "Ürünler", icon: ShoppingBag },
+  { href: "/products", label: "İstek Listesi", icon: ShoppingBag },
   { href: "/recommendations", label: "Öneriler", icon: Sparkles },
+  { href: "/subscriptions", label: "Abonelikler", icon: CreditCard },
   { href: "/chat", label: "AI Sohbet", icon: MessageSquare },
   { href: "/literacy", label: "Okuryazarlık", icon: Brain },
   { href: "/profile", label: "Profil", icon: User },

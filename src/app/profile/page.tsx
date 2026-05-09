@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { CATEGORIES, UserProfile, Transaction } from "@/lib/types";
-import { Trash2, Edit2, RotateCcw } from "lucide-react";
+import type { ReceiptScanResult, CSVImportResult } from "@/lib/types";
+import { Trash2, Edit2, RotateCcw, Camera, FileText, Upload, CheckCircle2, Loader2 } from "lucide-react";
 import { Modal, Skeleton, EmptyState } from "@/components/ui";
 import { useToast } from "@/components/Toast";
 
@@ -32,6 +33,11 @@ export default function ProfilePage() {
   const [filter, setFilter] = useState<"all" | "gelir" | "gider">("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [resetting, setResetting] = useState(false);
+  const [scanningReceipt, setScanningReceipt] = useState(false);
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [csvResult, setCsvResult] = useState<CSVImportResult | null>(null);
+  const receiptInputRef = useRef<HTMLInputElement>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -128,6 +134,69 @@ export default function ProfilePage() {
       toast.error("Hata", "Sıfırlama başarısız oldu.");
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function handleReceiptScan(file: File) {
+    setScanningReceipt(true);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(",")[1]); // Remove data:... prefix
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const res = await api.scanReceipt(base64, file.type);
+      const r = res.receipt;
+      setNewTx({
+        type: "gider",
+        category: r.category as Transaction["category"],
+        amount: String(r.totalAmount),
+        note: r.storeName + (r.items?.length ? ` (${r.items.length} ürün)` : ""),
+      });
+      toast.success("Fiş okundu!", `${r.storeName} — ${r.totalAmount}₺ (${r.category})`);
+    } catch {
+      toast.error("Fiş okunamadı", "Lütfen daha net bir fotoğraf deneyin.");
+    } finally {
+      setScanningReceipt(false);
+    }
+  }
+
+  async function handleCSVImport(file: File) {
+    setCsvImporting(true);
+    setCsvResult(null);
+    try {
+      const text = await file.text();
+      const result = await api.importCSV(text);
+      setCsvResult(result);
+      // İşlemleri otomatik ekle
+      let added = 0;
+      for (const row of result.rows) {
+        try {
+          await api.addTransaction({
+            type: row.type,
+            category: row.category as Transaction["category"],
+            amount: row.amount,
+            note: row.description,
+            date: row.date,
+          });
+          added++;
+        } catch { /* skip invalid */ }
+      }
+      const t = await api.getTransactions();
+      setTx(t.transactions);
+      toast.success(
+        "Ekstre aktarıldı!",
+        `${added} işlem başarıyla eklendi. Gelir: ${result.totalIncome}₺, Gider: ${result.totalExpense}₺`
+      );
+    } catch {
+      toast.error("İçe aktarma başarısız", "CSV formatını kontrol edin.");
+    } finally {
+      setCsvImporting(false);
     }
   }
 
@@ -311,12 +380,71 @@ export default function ProfilePage() {
                 onChange={(e) => setNewTx({ ...newTx, note: e.target.value })}
               />
             </Field>
-            <div className="col-span-2">
+            <div className="col-span-2 flex flex-wrap gap-2">
               <button className="btn-primary" type="submit">
                 Ekle
               </button>
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                onClick={() => receiptInputRef.current?.click()}
+                disabled={scanningReceipt}
+              >
+                {scanningReceipt ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+                Fiş Tara (AI)
+              </button>
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                onClick={() => csvInputRef.current?.click()}
+                disabled={csvImporting}
+              >
+                {csvImporting ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                Ekstre Yükle (CSV)
+              </button>
+              <input
+                ref={receiptInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleReceiptScan(file);
+                  e.target.value = "";
+                }}
+              />
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv,.txt"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleCSVImport(file);
+                  e.target.value = "";
+                }}
+              />
             </div>
           </form>
+
+          {/* CSV İçe Aktarma Sonucu */}
+          {csvResult && (
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle2 size={16} className="text-emerald-600" />
+                <span className="font-medium text-sm text-emerald-800">
+                  Ekstre Aktarıldı
+                </span>
+              </div>
+              <div className="text-xs text-emerald-700 space-y-0.5">
+                <div>{csvResult.rows.length} işlem işlendi</div>
+                <div>Toplam Gelir: {csvResult.totalIncome}₺ • Gider: {csvResult.totalExpense}₺</div>
+              </div>
+              <button onClick={() => setCsvResult(null)} className="text-xs text-emerald-600 underline mt-1">
+                Kapat
+              </button>
+            </div>
+          )}
 
           <div className="mt-4">
             <div className="flex items-center justify-between mb-2">
@@ -324,7 +452,7 @@ export default function ProfilePage() {
               <div className="flex gap-2">
                 <select
                   value={filter}
-                  onChange={(e) => setFilter(e.target.value as any)}
+                  onChange={(e) => setFilter(e.target.value as "all" | "gelir" | "gider")}
                   className="text-xs py-1 px-2 border rounded"
                 >
                   <option value="all">Tümü</option>
