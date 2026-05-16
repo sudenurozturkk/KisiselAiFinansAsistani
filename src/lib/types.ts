@@ -56,14 +56,38 @@ export interface ChatMessage {
 }
 
 /* ─── İstek Listesi (Wishlist) ──────────────────────────────── */
+export interface PricePoint {
+  date: string; // ISO
+  price: number;
+}
+
+export interface ProductScrapeData {
+  name?: string;
+  description?: string;
+  brand?: string;
+  imageUrl?: string;
+  price?: number;
+  currency?: string;
+  availability?: string;
+  siteName?: string;
+  url: string;
+}
+
 export interface WishlistItem {
   _id: string;
   userId: string;
   name: string;
   url?: string;
   imageUrl?: string;
-  price?: number;
-  estimatedPrice?: number;
+  description?: string; // ürün açıklaması (scrape veya AI)
+  brand?: string; // marka
+  siteName?: string; // satıcı (Trendyol, Hepsiburada, Amazon...)
+  price?: number; // güncel fiyat (kullanıcı veya scrape)
+  estimatedPrice?: number; // AI tahmini
+  originalPrice?: number; // ekleme anındaki fiyat (referans)
+  priceHistory?: PricePoint[]; // zaman içindeki fiyat değişimleri
+  lastCheckedAt?: string; // son fiyat kontrolü
+  priceAlerts?: boolean; // fiyat düşünce bildirim
   category: Category;
   priority: 1 | 2 | 3 | 4 | 5;
   urgency: "ihtiyaç" | "istek" | "hobi" | "acil";
@@ -71,7 +95,8 @@ export interface WishlistItem {
   note?: string;
   purchasedAt?: string;
   purchasedPrice?: number;
-  aiAnalysis?: string;
+  aiAnalysis?: string; // AI'nın kişiselleştirilmiş yorumu
+  aiVerdict?: "buy_now" | "wait" | "skip" | "find_alternative";
   createdAt: string;
 }
 
@@ -200,7 +225,6 @@ export interface TransactionsResponse {
   insights: Insight[];
   anomalies?: SpendingAnomaly[];
 }
-
 
 /* ─── Chat API Response ─────────────────────────────────────── */
 export interface ChatResponse {

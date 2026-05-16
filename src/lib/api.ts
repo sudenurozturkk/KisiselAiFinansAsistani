@@ -90,6 +90,30 @@ export const api = {
     call<{ analysis: WishlistAnalysis }>("/api/wishlist/analyze", {
       method: "POST",
     }),
+  scrapeProductUrl: (url: string) =>
+    call<{
+      data?: import("./types").ProductScrapeData;
+      error?: string;
+      partial?: { url: string };
+    }>("/api/wishlist/scrape", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+  refreshWishlistPrice: (id: string) =>
+    call<{
+      item: WishlistItem;
+      priceFound: boolean;
+      oldPrice?: number;
+      newPrice?: number;
+      dropped?: boolean;
+      priceDropPct?: number;
+      message: string;
+    }>(`/api/wishlist/${id}/refresh-price`, { method: "POST" }),
+  aiAnalyzeWishlistItem: (id: string) =>
+    call<{
+      item: WishlistItem;
+      analysis: import("./gemini").ProductAnalysisResult;
+    }>(`/api/wishlist/${id}/ai-analyze`, { method: "POST" }),
 
   // Sohbet (Agentic AI)
   getMessages: () => call<{ messages: ChatMessage[] }>("/api/chat"),
@@ -129,18 +153,30 @@ export const api = {
     }),
 
   // Abonelik Yönetimi (Manuel Giriş)
-  getSubscriptions: () =>
-    call<SubscriptionsResponse>("/api/subscriptions"),
-  addSubscription: (sub: { name: string; amount: number; frequency?: string; category?: string; nextPaymentDate?: string; note?: string }) =>
-    call<{ subscription: import("./types").Subscription }>("/api/subscriptions", {
-      method: "POST",
-      body: JSON.stringify(sub),
-    }),
+  getSubscriptions: () => call<SubscriptionsResponse>("/api/subscriptions"),
+  addSubscription: (sub: {
+    name: string;
+    amount: number;
+    frequency?: string;
+    category?: string;
+    nextPaymentDate?: string;
+    note?: string;
+  }) =>
+    call<{ subscription: import("./types").Subscription }>(
+      "/api/subscriptions",
+      {
+        method: "POST",
+        body: JSON.stringify(sub),
+      },
+    ),
   updateSubscription: (id: string, patch: Record<string, unknown>) =>
-    call<{ subscription: import("./types").Subscription }>(`/api/subscriptions/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(patch),
-    }),
+    call<{ subscription: import("./types").Subscription }>(
+      `/api/subscriptions/${id}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      },
+    ),
   deleteSubscription: (id: string) =>
     call<{ ok: boolean }>(`/api/subscriptions/${id}`, { method: "DELETE" }),
 
@@ -150,6 +186,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ csvText }),
     }),
+
+  // Finansal Rapor (AI)
+  getFinancialReport: () =>
+    call<{ markdown: string; generatedAt: string; user: UserProfile }>(
+      "/api/reports/financial",
+    ),
 
   // Yönetim
   resetDemo: (reseed = true) =>
