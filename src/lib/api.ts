@@ -233,4 +233,10 @@ export const api = {
     }),
   deleteIncome: (id: string) =>
     call<{ ok: boolean }>(`/api/incomes/${id}`, { method: "DELETE" }),
+
+  // Finansal Ayna — Duygusal Harcama Analizi
+  getEmotionalAnalysis: () =>
+    call<import("./emotional").FinancialMirrorResult & { userName: string; monthlyBudget: number }>(
+      "/api/emotional",
+    ),
 };

@@ -18,6 +18,7 @@ import type {
 import { summarizeFinance, formatTRY, buildInsights } from "./finance";
 import { detectAnomalies } from "./anomaly";
 import { listWishlistItems } from "./repo";
+import { analyzeEmotionalPatterns } from "./emotional";
 
 /* ─── Agent Tool Definitions (Gemini Function Declarations) ──── */
 
@@ -128,6 +129,15 @@ const toolDeclarations: FunctionDeclaration[] = [
         },
       },
       required: ["concept"],
+    },
+  },
+  {
+    name: "analyze_emotional_patterns",
+    description:
+      "Kullanıcının harcama davranışlarını gün ve saat bazlı analiz eder. Duygusal tetikleyicileri, risk bölgelerini ve davranış kalıplarını tespit eder. 'Finansal Ayna' özelliği.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {},
     },
   },
 ];
@@ -366,6 +376,27 @@ function executeFinancialLiteracyExplain(
   };
 }
 
+function executeEmotionalPatterns(
+  txs: Transaction[],
+): Record<string, unknown> {
+  const result = analyzeEmotionalPatterns(txs);
+  return {
+    insightCount: result.insights.length,
+    riskDays: result.riskDays,
+    safeDays: result.safeDays,
+    weekdayAvg: result.weekdayAvg,
+    weekendAvg: result.weekendAvg,
+    weekendPremium: result.weekendPremium,
+    insights: result.insights.map((i) => ({
+      type: i.type,
+      title: i.title,
+      description: i.description,
+      severity: i.severity,
+    })),
+    behaviorProfile: result.promptForAI,
+  };
+}
+
 /* ─── Tool Router ───────────────────────────────────────────── */
 
 async function executeTool(
@@ -387,6 +418,8 @@ async function executeTool(
       return executePredictMonthEnd(txs, user);
     case "detect_anomalies":
       return executeDetectAnomalies(txs);
+    case "analyze_emotional_patterns":
+      return executeEmotionalPatterns(txs);
     case "financial_literacy_explain":
       return executeFinancialLiteracyExplain(args);
     default:

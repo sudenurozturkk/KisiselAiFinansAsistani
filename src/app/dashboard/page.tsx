@@ -23,6 +23,9 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Eye,
+  ShieldAlert,
+  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import InsightsRow from "@/components/Insights";
@@ -34,16 +37,26 @@ import type {
   Transaction,
   SpendingAnomaly,
 } from "@/lib/types";
+import type { EmotionalInsight } from "@/lib/emotional";
 
 export default function DashboardPage() {
   const [data, setData] = useState<TransactionsResponse | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [mirrorInsights, setMirrorInsights] = useState<EmotionalInsight[]>([]);
+  const [mirrorRiskDays, setMirrorRiskDays] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
       const [u, t] = await Promise.all([api.getUser(), api.getTransactions()]);
       setUser(u.user);
       setData(t);
+      // Finansal Ayna verisini paralel yükle
+      api.getEmotionalAnalysis()
+        .then((r) => {
+          setMirrorInsights(r.insights || []);
+          setMirrorRiskDays(r.riskDays || []);
+        })
+        .catch(() => {});
     })();
   }, []);
 
@@ -128,6 +141,49 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Finansal Ayna — Duygusal Harcama Uyarıları */}
+      {mirrorInsights.length > 0 && (
+        <div className="rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-50 to-indigo-50 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Eye size={18} className="text-purple-600" />
+            <span className="font-semibold text-purple-900 text-sm">Finansal Ayna — Davranış Analizi</span>
+            <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium ml-auto">YENİ</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {mirrorInsights.slice(0, 3).map((insight, i) => (
+              <div
+                key={i}
+                className={`rounded-xl p-3 text-sm ${
+                  insight.type === "warning"
+                    ? "bg-amber-50 border border-amber-200"
+                    : insight.type === "positive"
+                      ? "bg-emerald-50 border border-emerald-200"
+                      : "bg-blue-50 border border-blue-200"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  {insight.type === "warning" ? (
+                    <ShieldAlert size={14} className="text-amber-600" />
+                  ) : insight.type === "positive" ? (
+                    <Sparkles size={14} className="text-emerald-600" />
+                  ) : (
+                    <Eye size={14} className="text-blue-600" />
+                  )}
+                  <span className="font-medium text-xs">{insight.title}</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">{insight.description}</p>
+              </div>
+            ))}
+          </div>
+          {mirrorRiskDays.length > 0 && (
+            <div className="mt-3 text-xs text-purple-700 flex items-center gap-1">
+              <ShieldAlert size={12} />
+              <span>Bu hafta dikkat: <strong>{mirrorRiskDays.slice(0, 2).join(", ")}</strong> bütçe tuzağı tarihinizde görünüyor.</span>
+            </div>
+          )}
         </div>
       )}
 
