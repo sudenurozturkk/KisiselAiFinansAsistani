@@ -15,6 +15,10 @@ import type {
   ChatMessage,
   QuizQuestion,
   ScenarioAnalysis,
+  AssetsResponse,
+  Asset,
+  IncomesResponse,
+  IncomeSource,
 } from "./types";
 
 /* ─── Generic Fetch Helper ──────────────────────────────────── */
@@ -199,4 +203,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reseed }),
     }),
+
+  // Varlıklar (Assets)
+  getAssets: () => call<AssetsResponse>("/api/assets"),
+  addAsset: (data: Partial<Asset>) =>
+    call<{ asset: Asset }>("/api/assets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateAsset: (id: string, patch: Partial<Asset>) =>
+    call<{ asset: Asset }>(`/api/assets/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  deleteAsset: (id: string) =>
+    call<{ ok: boolean }>(`/api/assets/${id}`, { method: "DELETE" }),
+
+  // Ek Gelirler (Incomes)
+  getIncomes: () => call<IncomesResponse>("/api/incomes"),
+  addIncome: (data: Partial<IncomeSource>) =>
+    call<{ income: IncomeSource }>("/api/incomes", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateIncome: (id: string, patch: Partial<IncomeSource>) =>
+    call<{ income: IncomeSource }>(`/api/incomes/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+  deleteIncome: (id: string) =>
+    call<{ ok: boolean }>(`/api/incomes/${id}`, { method: "DELETE" }),
 };
