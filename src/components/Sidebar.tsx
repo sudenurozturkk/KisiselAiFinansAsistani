@@ -13,6 +13,7 @@ import {
   CreditCard,
   Target,
   LogOut,
+  Landmark,
   type LucideIcon,
 } from "lucide-react";
 import { Avatar, Skeleton } from "./ui";
@@ -30,6 +31,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/assets", label: "Varlıklarım", icon: Landmark },
   { href: "/products", label: "İstek Listesi", icon: ShoppingBag },
   { href: "/recommendations", label: "Öneriler", icon: Sparkles },
   { href: "/simulator", label: "Senaryo", icon: Target },
