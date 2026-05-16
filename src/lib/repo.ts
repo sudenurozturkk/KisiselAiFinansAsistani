@@ -11,6 +11,8 @@ import type {
   UserProfile,
   WishlistItem,
   Subscription,
+  Asset,
+  IncomeSource,
 } from "./types";
 
 /* ─── Helpers ──────────────────────────────────────────────── */
@@ -102,6 +104,8 @@ export async function resetUserData(userId: string): Promise<void> {
   memdb.messages = memdb.messages.filter((m) => m.userId !== userId);
   memdb.wishlist = memdb.wishlist.filter((w) => w.userId !== userId);
   memdb.subscriptions = memdb.subscriptions.filter((s) => s.userId !== userId);
+  memdb.assets = memdb.assets.filter((a) => a.userId !== userId);
+  memdb.incomes = memdb.incomes.filter((i) => i.userId !== userId);
 }
 
 /* ─── Seed Demo Data ───────────────────────────────────────── */
@@ -546,12 +550,157 @@ export async function seedSubscriptionsIfEmpty(userId: string) {
   }
 }
 
+/* ─── Demo Assets Seed ─────────────────────────────────────── */
+
+export async function seedAssetsIfEmpty(userId: string) {
+  const existing = await listAssets(userId);
+  if (existing.length > 0) return;
+
+  const now = nowIso();
+  const samples: Omit<Asset, "_id">[] = [
+    {
+      userId,
+      type: "altın",
+      name: "Gram Altın",
+      ticker: "XAU/TRY",
+      quantity: 50,
+      buyPrice: 2850,
+      currentPrice: 3220,
+      currentValue: 50 * 3220,
+      currency: "TRY",
+      note: "Uzun vadeli birikim, her ay 5-10 gram ekliyorum.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "hisse",
+      name: "Türk Hava Yolları",
+      ticker: "THYAO",
+      quantity: 200,
+      buyPrice: 285,
+      currentPrice: 312,
+      currentValue: 200 * 312,
+      currency: "TRY",
+      note: "Temettü getirisi güçlü.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "hisse",
+      name: "Garanti Bankası",
+      ticker: "GARAN",
+      quantity: 500,
+      buyPrice: 105,
+      currentPrice: 118,
+      currentValue: 500 * 118,
+      currency: "TRY",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "döviz",
+      name: "Amerikan Doları",
+      ticker: "USD/TRY",
+      quantity: 1500,
+      buyPrice: 32.5,
+      currentPrice: 38.2,
+      currentValue: 1500 * 38.2,
+      currency: "TRY",
+      note: "Döviz biriktirme.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "kripto",
+      name: "Bitcoin",
+      ticker: "BTC",
+      quantity: 0.05,
+      buyPrice: 2_800_000,
+      currentPrice: 3_420_000,
+      currentValue: 0.05 * 3_420_000,
+      currency: "TRY",
+      note: "Küçük bir pozisyon.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "fon",
+      name: "İş Bankası Karma Fon",
+      ticker: "TMF",
+      quantity: 1000,
+      buyPrice: 2.45,
+      currentPrice: 2.72,
+      currentValue: 1000 * 2.72,
+      currency: "TRY",
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+
+  for (const a of samples) await addAsset(a);
+}
+
+/* ─── Demo Incomes Seed ────────────────────────────────────── */
+
+export async function seedIncomesIfEmpty(userId: string) {
+  const existing = await listIncomes(userId);
+  if (existing.length > 0) return;
+
+  const samples: Omit<IncomeSource, "_id" | "createdAt">[] = [
+    {
+      userId,
+      name: "Kadıköy Daire Kirası",
+      amount: 14500,
+      frequency: "aylık",
+      category: "kira",
+      active: true,
+      note: "2+1, kiracı Mehmet Bey, sözleşme 2027'ye kadar.",
+    },
+    {
+      userId,
+      name: "THYAO Temettü",
+      amount: 3200,
+      frequency: "yıllık",
+      category: "temettü",
+      active: true,
+      note: "Yıllık temettü ödemesi, genellikle Mayıs ayında.",
+    },
+    {
+      userId,
+      name: "Freelance Web Geliştirme",
+      amount: 5000,
+      frequency: "aylık",
+      category: "serbest",
+      active: true,
+      note: "Yarı zamanlı projeler, düzenli müşteri.",
+    },
+    {
+      userId,
+      name: "Eski Otopark Yeri Kirası",
+      amount: 2500,
+      frequency: "aylık",
+      category: "kira",
+      active: false,
+      note: "Satıldı, artık aktif değil.",
+    },
+  ];
+
+  for (const inc of samples) await addIncome(inc);
+}
+
 /** Tüm demo verileri tek seferde seedle (çağrı yerlerinde rahatlık için) */
 export async function seedAllIfEmpty(userId: string) {
   await Promise.all([
     seedTransactionsIfEmpty(userId),
     seedWishlistIfEmpty(userId),
     seedSubscriptionsIfEmpty(userId),
+    seedAssetsIfEmpty(userId),
+    seedIncomesIfEmpty(userId),
   ]);
 }
 
@@ -660,4 +809,87 @@ export async function deleteSubscription(
     (s) => !(s._id === id && s.userId === userId),
   );
   return memdb.subscriptions.length < before;
+}
+
+/* ─── Assets (Varlıklar) ───────────────────────────────────── */
+
+export async function listAssets(userId: string): Promise<Asset[]> {
+  return memdb.assets
+    .filter((a) => a.userId === userId)
+    .sort((a, b) => b.currentValue - a.currentValue);
+}
+
+export async function addAsset(
+  data: Omit<Asset, "_id">,
+): Promise<Asset> {
+  const row: Asset = { ...data, _id: genId() };
+  memdb.assets.push(row);
+  return row;
+}
+
+export async function updateAsset(
+  userId: string,
+  id: string,
+  patch: Partial<Asset>,
+): Promise<Asset | null> {
+  const idx = memdb.assets.findIndex(
+    (a) => a._id === id && a.userId === userId,
+  );
+  if (idx === -1) return null;
+  const updated = { ...memdb.assets[idx], ...patch, updatedAt: nowIso() };
+  // Otomatik olarak currentValue hesapla
+  if (updated.quantity != null && updated.currentPrice != null) {
+    updated.currentValue = updated.quantity * updated.currentPrice;
+  }
+  memdb.assets[idx] = updated;
+  return updated;
+}
+
+export async function deleteAsset(
+  userId: string,
+  id: string,
+): Promise<boolean> {
+  const before = memdb.assets.length;
+  memdb.assets = memdb.assets.filter(
+    (a) => !(a._id === id && a.userId === userId),
+  );
+  return memdb.assets.length < before;
+}
+
+/* ─── Income Sources (Ek Gelirler) ─────────────────────────── */
+
+export async function listIncomes(userId: string): Promise<IncomeSource[]> {
+  return memdb.incomes.filter((i) => i.userId === userId);
+}
+
+export async function addIncome(
+  data: Omit<IncomeSource, "_id" | "createdAt">,
+): Promise<IncomeSource> {
+  const row: IncomeSource = { ...data, _id: genId(), createdAt: nowIso() };
+  memdb.incomes.push(row);
+  return row;
+}
+
+export async function updateIncome(
+  userId: string,
+  id: string,
+  patch: Partial<IncomeSource>,
+): Promise<IncomeSource | null> {
+  const idx = memdb.incomes.findIndex(
+    (i) => i._id === id && i.userId === userId,
+  );
+  if (idx === -1) return null;
+  memdb.incomes[idx] = { ...memdb.incomes[idx], ...patch };
+  return memdb.incomes[idx];
+}
+
+export async function deleteIncome(
+  userId: string,
+  id: string,
+): Promise<boolean> {
+  const before = memdb.incomes.length;
+  memdb.incomes = memdb.incomes.filter(
+    (i) => !(i._id === id && i.userId === userId),
+  );
+  return memdb.incomes.length < before;
 }
