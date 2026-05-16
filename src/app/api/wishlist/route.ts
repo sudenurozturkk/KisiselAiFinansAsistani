@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserIdFromReq } from "@/lib/auth";
-import { listWishlistItems, addWishlistItem } from "@/lib/repo";
+import { listWishlistItems, addWishlistItem, seedAllIfEmpty } from "@/lib/repo";
 import type { WishlistItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const userId = getUserIdFromReq(req);
+  await seedAllIfEmpty(userId);
   const items = await listWishlistItems(userId);
 
   const wishlistItems = items.filter((i) => i.status === "wishlist");
@@ -37,12 +38,17 @@ export async function POST(req: NextRequest) {
   const {
     name,
     url,
+    imageUrl,
+    description,
+    brand,
+    siteName,
     price,
     estimatedPrice,
     category = "Diğer",
     priority = 3,
     urgency = "istek",
     note,
+    priceAlerts,
   } = body as Partial<WishlistItem>;
 
   if (!name || name.trim().length < 2) {
@@ -52,17 +58,28 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const initialPrice = price ? Number(price) : undefined;
   const item = await addWishlistItem({
     userId,
     name: name.trim(),
     url: url?.trim() || undefined,
-    price: price ? Number(price) : undefined,
+    imageUrl: imageUrl?.trim() || undefined,
+    description: description?.trim() || undefined,
+    brand: brand?.trim() || undefined,
+    siteName: siteName?.trim() || undefined,
+    price: initialPrice,
+    originalPrice: initialPrice, // ekleme anındaki fiyatı sakla
+    priceHistory: initialPrice
+      ? [{ date: new Date().toISOString(), price: initialPrice }]
+      : undefined,
     estimatedPrice: estimatedPrice ? Number(estimatedPrice) : undefined,
     category: category as WishlistItem["category"],
     priority: (priority as WishlistItem["priority"]) || 3,
     urgency: (urgency as WishlistItem["urgency"]) || "istek",
     status: "wishlist",
     note: note?.trim() || undefined,
+    priceAlerts: priceAlerts ?? true,
+    lastCheckedAt: new Date().toISOString(),
   });
 
   return NextResponse.json({ item }, { status: 201 });

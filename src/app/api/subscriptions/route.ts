@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserIdFromReq } from "@/lib/auth";
-import { listSubscriptions, addSubscription } from "@/lib/repo";
+import { listSubscriptions, addSubscription, seedAllIfEmpty } from "@/lib/repo";
 import type { Subscription } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,7 @@ function monthlyEquivalent(amount: number, freq: Subscription["frequency"]) {
 
 export async function GET(req: NextRequest) {
   const userId = getUserIdFromReq(req);
+  await seedAllIfEmpty(userId);
   const subs = await listSubscriptions(userId);
   const activeSubs = subs.filter((s) => s.active);
 
@@ -34,8 +35,14 @@ export async function POST(req: NextRequest) {
   const userId = getUserIdFromReq(req);
   const body = await req.json();
 
-  const { name, amount, frequency = "aylık", category = "Diğer", nextPaymentDate, note } =
-    body as Partial<Subscription>;
+  const {
+    name,
+    amount,
+    frequency = "aylık",
+    category = "Diğer",
+    nextPaymentDate,
+    note,
+  } = body as Partial<Subscription>;
 
   if (!name || name.trim().length < 2) {
     return NextResponse.json(
