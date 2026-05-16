@@ -115,171 +115,172 @@ export async function seedTransactionsIfEmpty(userId: string) {
   if (existing.length > 0) return;
 
   const today = new Date();
-  const variation = (n: number) => Math.round(n * (0.85 + Math.random() * 0.3));
+  const v = (n: number) => Math.round(n * (0.85 + Math.random() * 0.3));
   const samples: Omit<Transaction, "_id">[] = [];
 
+  /** Her ay için temel tekrar eden harcamalar */
   for (let m = 5; m >= 0; m--) {
-    samples.push(
-      {
-        userId,
-        type: "gelir",
-        category: "Diğer",
-        amount: 25000,
-        note: "Maaş",
-        date: monthAgo(today, m, 1).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Kira/Fatura",
-        amount: 7500,
-        note: "Kira",
-        date: monthAgo(today, m, 2).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Kira/Fatura",
-        amount: variation(950),
-        note: "Elektrik + su",
-        date: monthAgo(today, m, 4).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Kira/Fatura",
-        amount: variation(380),
-        note: "İnternet",
-        date: monthAgo(today, m, 5).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Gıda",
-        amount: variation(1400),
-        note: "Market - hafta 1",
-        date: monthAgo(today, m, 6).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Gıda",
-        amount: variation(1200),
-        note: "Market - hafta 3",
-        date: monthAgo(today, m, 19).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Gıda",
-        amount: variation(620),
-        note: "Dışarıda yemek",
-        date: monthAgo(today, m, 11).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Ulaşım",
-        amount: variation(720),
-        note: "Yakıt + Akbil",
-        date: monthAgo(today, m, 7).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Eğlence",
-        amount: variation(820),
-        note: "Sinema/konser",
-        date: monthAgo(today, m, 13).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Alışveriş",
-        amount: variation(1100),
-        note: "Kıyafet",
-        date: monthAgo(today, m, 16).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Sağlık",
-        amount: variation(420),
-        note: "Eczane",
-        date: monthAgo(today, m, 21).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Eğlence",
-        amount: 99,
-        note: "Netflix",
-        date: monthAgo(today, m, 3).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Eğlence",
-        amount: 60,
-        note: "Spotify Premium",
-        date: monthAgo(today, m, 5).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Eğlence",
-        amount: 80,
-        note: "YouTube Premium",
-        date: monthAgo(today, m, 8).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Kira/Fatura",
-        amount: 190,
-        note: "Vodafone fatura",
-        date: monthAgo(today, m, 10).toISOString(),
-      },
-      {
-        userId,
-        type: "gider",
-        category: "Sağlık",
-        amount: 450,
-        note: "MacFit spor salonu",
-        date: monthAgo(today, m, 12).toISOString(),
-      },
-    );
+    // ── Gelirler ──
+    samples.push({
+      userId, type: "gelir", category: "Diğer", amount: 25000,
+      note: "Maaş", date: monthAgo(today, m, 1).toISOString(),
+    });
     if (m % 3 === 0) {
       samples.push({
-        userId,
-        type: "gelir",
-        category: "Diğer",
-        amount: 2500,
-        note: "Freelance proje",
-        date: monthAgo(today, m, 18).toISOString(),
+        userId, type: "gelir", category: "Diğer", amount: v(2500),
+        note: "Freelance proje ödemesi", date: monthAgo(today, m, 18).toISOString(),
       });
     }
+    if (m === 2) {
+      samples.push({
+        userId, type: "gelir", category: "Yatırım", amount: 3200,
+        note: "THYAO temettü geliri", date: monthAgo(today, m, 15).toISOString(),
+      });
+    }
+
+    // ── Sabit Giderler ──
+    samples.push(
+      { userId, type: "gider", category: "Kira/Fatura", amount: 7500,
+        note: "Kira", date: monthAgo(today, m, 2).toISOString() },
+      { userId, type: "gider", category: "Kira/Fatura", amount: v(950),
+        note: "Elektrik + doğalgaz", date: monthAgo(today, m, 4).toISOString() },
+      { userId, type: "gider", category: "Kira/Fatura", amount: v(380),
+        note: "Türk Telekom internet", date: monthAgo(today, m, 5).toISOString() },
+      { userId, type: "gider", category: "Kira/Fatura", amount: 190,
+        note: "Vodafone cep faturası", date: monthAgo(today, m, 10).toISOString() },
+      { userId, type: "gider", category: "Kira/Fatura", amount: v(280),
+        note: "Su faturası", date: monthAgo(today, m, 12).toISOString() },
+    );
+
+    // ── Market & Gıda (4-5 kez/ay) ──
+    samples.push(
+      { userId, type: "gider", category: "Gıda", amount: v(1400),
+        note: "Migros - haftalık market", date: monthAgo(today, m, 3).toISOString() },
+      { userId, type: "gider", category: "Gıda", amount: v(1100),
+        note: "BİM + A101 market", date: monthAgo(today, m, 10).toISOString() },
+      { userId, type: "gider", category: "Gıda", amount: v(900),
+        note: "CarrefourSA haftalık alışveriş", date: monthAgo(today, m, 17).toISOString() },
+      { userId, type: "gider", category: "Gıda", amount: v(1200),
+        note: "Migros - ay sonu market", date: monthAgo(today, m, 24).toISOString() },
+    );
+
+    // ── Dışarıda Yemek (2-3 kez/ay) ──
+    samples.push(
+      { userId, type: "gider", category: "Gıda", amount: v(320),
+        note: "Getir yemek siparişi", date: monthAgo(today, m, 7).toISOString() },
+      { userId, type: "gider", category: "Gıda", amount: v(450),
+        note: "Restoran - arkadaş buluşması", date: monthAgo(today, m, 14).toISOString() },
+    );
+
+    // ── Ulaşım (3-4 kez/ay) ──
+    samples.push(
+      { userId, type: "gider", category: "Ulaşım", amount: v(380),
+        note: "İstanbulkart dolum", date: monthAgo(today, m, 2).toISOString() },
+      { userId, type: "gider", category: "Ulaşım", amount: v(350),
+        note: "Akaryakıt (BP)", date: monthAgo(today, m, 9).toISOString() },
+      { userId, type: "gider", category: "Ulaşım", amount: v(120),
+        note: "Uber / BiTaksi", date: monthAgo(today, m, 20).toISOString() },
+    );
+
+    // ── Abonelikler (dijital) ──
+    samples.push(
+      { userId, type: "gider", category: "Eğlence", amount: 99,
+        note: "Netflix", date: monthAgo(today, m, 3).toISOString() },
+      { userId, type: "gider", category: "Eğlence", amount: 60,
+        note: "Spotify Premium", date: monthAgo(today, m, 5).toISOString() },
+      { userId, type: "gider", category: "Eğlence", amount: 80,
+        note: "YouTube Premium", date: monthAgo(today, m, 8).toISOString() },
+      { userId, type: "gider", category: "Sağlık", amount: 450,
+        note: "MacFit spor salonu", date: monthAgo(today, m, 1).toISOString() },
+    );
+
+    // ── Eğlence (değişken) ──
+    samples.push(
+      { userId, type: "gider", category: "Eğlence", amount: v(350),
+        note: m % 2 === 0 ? "Sinema + patlamış mısır" : "Konser bileti",
+        date: monthAgo(today, m, 13).toISOString() },
+    );
+
+    // ── Alışveriş ──
+    samples.push(
+      { userId, type: "gider", category: "Alışveriş", amount: v(850),
+        note: m % 2 === 0 ? "Trendyol kıyafet" : "Zara mağaza",
+        date: monthAgo(today, m, 16).toISOString() },
+    );
+
+    // ── Sağlık ──
+    samples.push(
+      { userId, type: "gider", category: "Sağlık", amount: v(280),
+        note: "Eczane - vitamin/ilaç", date: monthAgo(today, m, 21).toISOString() },
+    );
+
+    // ── Dürtüsel Gece Harcamaları (Finansal Ayna için) ──
+    // Perşembe & Cumartesi geceleri dürtüsel alışveriş
+    if (m <= 3) {
+      const nightDate = monthAgo(today, m, 11); // Perşembe civarı
+      nightDate.setHours(23, 30, 0);
+      samples.push({
+        userId, type: "gider", category: "Alışveriş", amount: v(680),
+        note: "Trendyol gece siparişi", date: nightDate.toISOString(),
+      });
+    }
+    if (m <= 2) {
+      const weekendNight = monthAgo(today, m, 6); // Cumartesi
+      weekendNight.setHours(1, 15, 0);
+      samples.push({
+        userId, type: "gider", category: "Gıda", amount: v(250),
+        note: "Yemeksepeti gece siparişi", date: weekendNight.toISOString(),
+      });
+    }
+
+    // ── Eğitim (2 ayda 1) ──
     if (m % 2 === 0) {
       samples.push({
-        userId,
-        type: "gider",
-        category: "Eğitim",
-        amount: variation(550),
-        note: "Online kurs",
-        date: monthAgo(today, m, 22).toISOString(),
+        userId, type: "gider", category: "Eğitim", amount: v(450),
+        note: "Udemy online kurs", date: monthAgo(today, m, 22).toISOString(),
       });
     }
+
+    // ── Yatırım (bu ay) ──
     if (m === 0) {
+      samples.push(
+        { userId, type: "gider", category: "Yatırım", amount: 2000,
+          note: "Vadeli mevduat transferi", date: monthAgo(today, 0, 8).toISOString() },
+        { userId, type: "gider", category: "Yatırım", amount: 500,
+          note: "BES katkı payı", date: monthAgo(today, 0, 1).toISOString() },
+      );
+    }
+
+    // ── Hafta sonu sosyal harcamalar ──
+    samples.push(
+      { userId, type: "gider", category: "Eğlence", amount: v(280),
+        note: m % 2 === 0 ? "Cafe buluşması" : "Kahve + tatlı",
+        date: monthAgo(today, m, 20).toISOString() },
+    );
+
+    // ── Ekstra değişken harcamalar (ay bazlı) ──
+    if (m === 4) { // Bayram ayı
+      samples.push(
+        { userId, type: "gider", category: "Alışveriş", amount: 3200,
+          note: "Bayram hediye alışverişi", date: monthAgo(today, 4, 25).toISOString() },
+        { userId, type: "gider", category: "Ulaşım", amount: 1800,
+          note: "Bayram tatili otobüs bileti", date: monthAgo(today, 4, 26).toISOString() },
+      );
+    }
+    if (m === 1) { // Teknoloji alımı
       samples.push({
-        userId,
-        type: "gider",
-        category: "Yatırım",
-        amount: 1500,
-        note: "Mevduat transferi",
-        date: monthAgo(today, 0, 8).toISOString(),
+        userId, type: "gider", category: "Alışveriş", amount: 4500,
+        note: "iPad taksit ödemesi (2/6)", date: monthAgo(today, 1, 15).toISOString(),
+      });
+    }
+    if (m === 3) { // Sağlık
+      samples.push({
+        userId, type: "gider", category: "Sağlık", amount: 1200,
+        note: "Diş tedavisi", date: monthAgo(today, 3, 18).toISOString(),
       });
     }
   }
+
   for (const s of samples) await addTransaction(s);
 }
 

@@ -208,6 +208,47 @@ export function analyzeEmotionalPatterns(
     });
   }
 
+  // 5. Kategori bazlı desen analizi
+  const catTimeMap = new Map<string, { total: number; count: number; nightCount: number }>();
+  for (const tx of expenses) {
+    const d = new Date(tx.date);
+    const h = d.getHours();
+    const isNight = h >= 22 || h < 6;
+    const entry = catTimeMap.get(tx.category) || { total: 0, count: 0, nightCount: 0 };
+    entry.total += tx.amount;
+    entry.count += 1;
+    if (isNight) entry.nightCount += 1;
+    catTimeMap.set(tx.category, entry);
+  }
+
+  // Gece alışverişi yoğun kategoriler
+  for (const [cat, data] of catTimeMap) {
+    if (data.nightCount >= 3 && data.nightCount / data.count > 0.25) {
+      insights.push({
+        type: "warning",
+        title: `${cat} kategorisinde gece dürtüsü`,
+        description: `${cat} harcamalarının %${Math.round((data.nightCount / data.count) * 100)}'i gece saatlerinde. Bu genellikle dürtüsel karar vermeyle ilişkili. Sepete ekle, sabah tekrar bak!`,
+        severity: 3,
+      });
+    }
+  }
+
+  // 6. Maaş günü sonrası artış tespiti
+  const firstWeekSpend = expenses.filter((t) => {
+    const d = new Date(t.date).getDate();
+    return d <= 7;
+  }).reduce((s, t) => s + t.amount, 0);
+  const restSpend = totalExpense - firstWeekSpend;
+  const firstWeekRatio = firstWeekSpend / Math.max(1, totalExpense);
+  if (firstWeekRatio > 0.35) {
+    insights.push({
+      type: "pattern",
+      title: "Maaş günü harcama patlaması",
+      description: `Harcamalarının %${Math.round(firstWeekRatio * 100)}'i ayın ilk haftasında gerçekleşiyor. Maaş gelince harcama dürtüsü artıyor — otomatik tasarruf transferi kur!`,
+      severity: 3,
+    });
+  }
+
   const riskDays = riskPatterns.map((p) => `${p.dayLabel} ${p.hourSlot.split(" ")[0]}`);
   const safeDays = safePatterns.map((p) => `${p.dayLabel} ${p.hourSlot.split(" ")[0]}`);
 

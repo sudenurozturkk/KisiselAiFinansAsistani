@@ -239,4 +239,8 @@ export const api = {
     call<import("./emotional").FinancialMirrorResult & { userName: string; monthlyBudget: number }>(
       "/api/emotional",
     ),
+
+  // Akıllı Bildirimler
+  getAlerts: () =>
+    call<{ alerts: import("./smart-alerts").SmartAlert[] }>("/api/alerts"),
 };

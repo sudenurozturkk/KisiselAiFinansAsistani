@@ -26,6 +26,15 @@ import {
   Eye,
   ShieldAlert,
   Sparkles,
+  Bell,
+  CreditCard,
+  Target,
+  Star,
+  Scissors,
+  AlertOctagon,
+  BarChart3,
+  Trophy,
+  ArrowRight,
 } from "lucide-react";
 import Link from "next/link";
 import InsightsRow from "@/components/Insights";
@@ -38,24 +47,29 @@ import type {
   SpendingAnomaly,
 } from "@/lib/types";
 import type { EmotionalInsight } from "@/lib/emotional";
+import type { SmartAlert } from "@/lib/smart-alerts";
 
 export default function DashboardPage() {
   const [data, setData] = useState<TransactionsResponse | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [mirrorInsights, setMirrorInsights] = useState<EmotionalInsight[]>([]);
   const [mirrorRiskDays, setMirrorRiskDays] = useState<string[]>([]);
+  const [alerts, setAlerts] = useState<SmartAlert[]>([]);
 
   useEffect(() => {
     (async () => {
       const [u, t] = await Promise.all([api.getUser(), api.getTransactions()]);
       setUser(u.user);
       setData(t);
-      // Finansal Ayna verisini paralel yükle
+      // Paralel veri yükle
       api.getEmotionalAnalysis()
         .then((r) => {
           setMirrorInsights(r.insights || []);
           setMirrorRiskDays(r.riskDays || []);
         })
+        .catch(() => {});
+      api.getAlerts()
+        .then((r) => setAlerts(r.alerts || []))
         .catch(() => {});
     })();
   }, []);
@@ -109,6 +123,22 @@ export default function DashboardPage() {
           </Link>
         </div>
       </header>
+
+      {/* Akıllı Bildirimler */}
+      {alerts.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <Bell size={18} className="text-brand-600" />
+            <span className="font-semibold text-slate-800 text-sm">Akıllı Bildirimler</span>
+            <span className="ml-auto text-[10px] bg-brand-100 text-brand-700 px-2 py-0.5 rounded-full font-medium">{alerts.length} bildirim</span>
+          </div>
+          <div className="space-y-2">
+            {alerts.slice(0, 4).map((alert) => (
+              <AlertCard key={alert.id} alert={alert} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Finansal Sağlık Skoru + Insights */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -488,6 +518,66 @@ function HealthScoreGauge({ score }: { score: HealthScoreResult }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ─── Alert Card Component ───────────────────────────────────── */
+
+const ALERT_ICON_MAP: Record<string, typeof AlertTriangle> = {
+  AlertTriangle,
+  TrendingDown,
+  CreditCard,
+  Scissors,
+  Target,
+  AlertOctagon,
+  BarChart3,
+  Star,
+  Trophy,
+};
+
+const SEVERITY_STYLES: Record<string, string> = {
+  critical: "bg-red-50 border-red-200 text-red-900",
+  warning: "bg-amber-50 border-amber-200 text-amber-900",
+  info: "bg-blue-50 border-blue-200 text-blue-900",
+  success: "bg-emerald-50 border-emerald-200 text-emerald-900",
+};
+
+const SEVERITY_ICON_COLOR: Record<string, string> = {
+  critical: "text-red-600",
+  warning: "text-amber-600",
+  info: "text-blue-600",
+  success: "text-emerald-600",
+};
+
+function AlertCard({ alert }: { alert: SmartAlert }) {
+  const Icon = ALERT_ICON_MAP[alert.icon] || Bell;
+  const style = SEVERITY_STYLES[alert.severity] || SEVERITY_STYLES.info;
+  const iconColor = SEVERITY_ICON_COLOR[alert.severity] || "text-blue-600";
+
+  return (
+    <div className={`rounded-xl border p-3 flex items-start gap-3 ${style} transition-all hover:shadow-sm`}>
+      <div className={`mt-0.5 shrink-0 ${iconColor}`}>
+        <Icon size={16} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-xs">{alert.title}</div>
+        <p className="text-[11px] opacity-80 leading-relaxed mt-0.5">{alert.description}</p>
+      </div>
+      {alert.actionHref && (
+        <Link
+          href={alert.actionHref}
+          className={`shrink-0 text-[10px] font-medium px-2 py-1 rounded-lg border transition-colors ${
+            alert.severity === "critical"
+              ? "bg-red-100 border-red-300 hover:bg-red-200"
+              : alert.severity === "warning"
+                ? "bg-amber-100 border-amber-300 hover:bg-amber-200"
+                : "bg-blue-100 border-blue-300 hover:bg-blue-200"
+          }`}
+        >
+          {alert.actionLabel} <ArrowRight size={10} className="inline" />
+        </Link>
+      )}
     </div>
   );
 }
