@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -9,8 +9,14 @@
   --foreground: 11 18 32;
 }
 
-html, body {
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+html,
+body {
+  font-family:
+    "Inter",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
   background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
   color: #0b1220;
   min-height: 100vh;
@@ -44,6 +50,9 @@ html, body {
   .btn-ghost {
     @apply btn text-slate-700 hover:bg-slate-100 active:scale-[0.98];
   }
+  .btn-danger {
+    @apply btn bg-rose-600 text-white hover:bg-rose-700 hover:shadow-lg hover:shadow-rose-500/25 active:scale-[0.98];
+  }
   .input {
     @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all duration-200;
   }
@@ -55,7 +64,17 @@ html, body {
   }
 }
 
-/* Animations */
+/* Scroll utilities */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ─── Animations ────────────────────────────────────────────── */
+
 @keyframes fadeInUp {
   from {
     opacity: 0;
@@ -79,19 +98,89 @@ html, body {
 }
 
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes blob {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  25% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+  50% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+  75% {
+    transform: translate(20px, 40px) scale(1.05);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 20px rgba(14, 165, 233, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(14, 165, 233, 0.3);
+  }
 }
 
 .animate-fade-in-up {
-  animation: fadeInUp 0.3s ease-out;
+  animation: fadeInUp 0.4s ease-out;
 }
 
 .animate-slide-in-left {
   animation: slideInLeft 0.3s ease-out;
 }
 
-/* Prose styling for Markdown content */
+.animate-blob {
+  animation: blob 8s infinite ease-in-out;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animation-delay-2000 {
+  animation-delay: 2s;
+}
+
+.animation-delay-4000 {
+  animation-delay: 4s;
+}
+
+/* ─── Glassmorphism Utility ─────────────────────────────────── */
+
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ─── Prose styling for Markdown content ────────────────────── */
+
 .prose-sm h3 {
   @apply text-base font-semibold mt-4 mb-2;
 }
