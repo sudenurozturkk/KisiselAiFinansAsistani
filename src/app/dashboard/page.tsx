@@ -48,6 +48,7 @@ import type {
 } from "@/lib/types";
 import type { EmotionalInsight } from "@/lib/emotional";
 import type { SmartAlert } from "@/lib/smart-alerts";
+import type { DailyTip } from "@/lib/daily-tips";
 
 export default function DashboardPage() {
   const [data, setData] = useState<TransactionsResponse | null>(null);
@@ -55,6 +56,7 @@ export default function DashboardPage() {
   const [mirrorInsights, setMirrorInsights] = useState<EmotionalInsight[]>([]);
   const [mirrorRiskDays, setMirrorRiskDays] = useState<string[]>([]);
   const [alerts, setAlerts] = useState<SmartAlert[]>([]);
+  const [tips, setTips] = useState<DailyTip[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -70,6 +72,9 @@ export default function DashboardPage() {
         .catch(() => {});
       api.getAlerts()
         .then((r) => setAlerts(r.alerts || []))
+        .catch(() => {});
+      api.getDailyTips()
+        .then((r) => setTips(r.tips || []))
         .catch(() => {});
     })();
   }, []);
@@ -214,6 +219,27 @@ export default function DashboardPage() {
               <span>Bu hafta dikkat: <strong>{mirrorRiskDays.slice(0, 2).join(", ")}</strong> bütçe tuzağı tarihinizde görünüyor.</span>
             </div>
           )}
+        </div>
+      )}
+      {/* AI Günlük Tavsiyeler */}
+      {tips.length > 0 && (
+        <div className="rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-sky-50 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles size={18} className="text-cyan-600" />
+            <span className="font-semibold text-cyan-900 text-sm">AI Tavsiyeleri — Bugünü̇n İçin</span>
+            <span className="text-[10px] bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full font-medium ml-auto">AI</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {tips.map((tip) => (
+              <div key={tip.id} className="rounded-xl bg-white/70 border border-cyan-100 p-3 flex gap-3 items-start hover:shadow-sm transition-shadow">
+                <span className="text-xl leading-none mt-0.5">{tip.emoji}</span>
+                <div className="min-w-0">
+                  <div className="font-medium text-xs text-cyan-900">{tip.title}</div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">{tip.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

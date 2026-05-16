@@ -243,4 +243,12 @@ export const api = {
   // Akıllı Bildirimler
   getAlerts: () =>
     call<{ alerts: import("./smart-alerts").SmartAlert[] }>("/api/alerts"),
+
+  // AI Abonelik Optimizasyonu
+  getSubOptimization: () =>
+    call<import("./sub-optimizer").SubOptimizationReport>("/api/subscriptions/optimize"),
+
+  // AI Günlük Tavsiyeler
+  getDailyTips: () =>
+    call<{ tips: import("./daily-tips").DailyTip[] }>("/api/tips"),
 };

@@ -9,6 +9,12 @@ import {
   ToggleRight,
   Calendar,
   Loader2,
+  Sparkles,
+  ArrowDown,
+  CheckCircle,
+  XCircle,
+  ArrowDownCircle,
+  MessageSquare,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { Skeleton, Badge, Modal } from "@/components/ui";
@@ -32,6 +38,8 @@ export default function SubscriptionsPage() {
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [optReport, setOptReport] = useState<import("@/lib/sub-optimizer").SubOptimizationReport | null>(null);
+  const [optLoading, setOptLoading] = useState(false);
   const toast = useToast();
 
   const [form, setForm] = useState({
@@ -159,6 +167,75 @@ export default function SubscriptionsPage() {
             {formatTRY(data?.totalYearly || 0)}
           </div>
         </div>
+      </div>
+
+      {/* AI Abonelik Optimizasyonu */}
+      <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-violet-50 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Sparkles size={18} className="text-indigo-600" />
+          <span className="font-semibold text-indigo-900 text-sm">AI Abonelik Optimizasyonu</span>
+          <button
+            onClick={async () => {
+              setOptLoading(true);
+              try {
+                const r = await api.getSubOptimization();
+                setOptReport(r);
+              } catch {} finally { setOptLoading(false); }
+            }}
+            className="ml-auto text-[11px] font-medium bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-3 py-1 rounded-lg transition-colors flex items-center gap-1"
+            disabled={optLoading}
+          >
+            {optLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+            {optLoading ? "Analiz ediliyor..." : optReport ? "Yeniden Analiz Et" : "Aboneliklerimi Analiz Et"}
+          </button>
+        </div>
+        {optReport && (
+          <div className="space-y-2">
+            {optReport.totalMonthlySaving > 0 && (
+              <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-center">
+                <div className="text-xs text-emerald-700">Potansiyel Tasarruf</div>
+                <div className="text-xl font-bold text-emerald-700">
+                  {formatTRY(optReport.totalMonthlySaving)}<span className="text-xs font-normal">/ay</span>
+                  {" · "}
+                  {formatTRY(optReport.totalYearlySaving)}<span className="text-xs font-normal">/yıl</span>
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-indigo-800">{optReport.summary}</p>
+            {optReport.optimizations.filter(o => o.verdict !== "keep").map((opt) => (
+              <div key={opt.subscriptionId} className={`rounded-xl p-3 border flex items-start gap-3 ${
+                opt.verdict === "cancel" ? "bg-red-50 border-red-200" :
+                opt.verdict === "downgrade" ? "bg-amber-50 border-amber-200" :
+                "bg-blue-50 border-blue-200"
+              }`}>
+                <div className="mt-0.5 shrink-0">
+                  {opt.verdict === "cancel" ? <XCircle size={16} className="text-red-600" /> :
+                   opt.verdict === "downgrade" ? <ArrowDownCircle size={16} className="text-amber-600" /> :
+                   <MessageSquare size={16} className="text-blue-600" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-xs">{opt.name}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                      opt.verdict === "cancel" ? "bg-red-100 text-red-700" :
+                      opt.verdict === "downgrade" ? "bg-amber-100 text-amber-700" :
+                      "bg-blue-100 text-blue-700"
+                    }`}>
+                      {opt.verdict === "cancel" ? "İptal Et" : opt.verdict === "downgrade" ? "Düşür" : "Pazarlık Yap"}
+                    </span>
+                    {opt.monthlySaving > 0 && (
+                      <span className="text-[10px] text-emerald-700 font-medium">-{formatTRY(opt.monthlySaving)}/ay</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">{opt.reason}</p>
+                  {opt.alternative && (
+                    <p className="text-[10px] text-indigo-600 mt-1">💡 Alternatif: {opt.alternative}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Abonelik Listesi */}
