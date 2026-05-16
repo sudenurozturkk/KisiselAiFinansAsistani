@@ -693,15 +693,24 @@ export async function seedIncomesIfEmpty(userId: string) {
   for (const inc of samples) await addIncome(inc);
 }
 
+/** Concurrent seed guard — StrictMode/double-render koruması */
+const seedingLock = new Set<string>();
+
 /** Tüm demo verileri tek seferde seedle (çağrı yerlerinde rahatlık için) */
 export async function seedAllIfEmpty(userId: string) {
-  await Promise.all([
-    seedTransactionsIfEmpty(userId),
-    seedWishlistIfEmpty(userId),
-    seedSubscriptionsIfEmpty(userId),
-    seedAssetsIfEmpty(userId),
-    seedIncomesIfEmpty(userId),
-  ]);
+  if (seedingLock.has(userId)) return; // Zaten seed ediliyor
+  seedingLock.add(userId);
+  try {
+    await Promise.all([
+      seedTransactionsIfEmpty(userId),
+      seedWishlistIfEmpty(userId),
+      seedSubscriptionsIfEmpty(userId),
+      seedAssetsIfEmpty(userId),
+      seedIncomesIfEmpty(userId),
+    ]);
+  } finally {
+    seedingLock.delete(userId);
+  }
 }
 
 /* ─── Chat Messages ────────────────────────────────────────── */

@@ -6,7 +6,6 @@ import {
   getOrCreateUser,
   listMessages,
   listTransactions,
-  seedTransactionsIfEmpty,
 } from "@/lib/repo";
 import { generateChatReply } from "@/lib/gemini";
 
@@ -27,7 +26,6 @@ export async function POST(req: NextRequest) {
   }
 
   const user = await getOrCreateUser(userId);
-  await seedTransactionsIfEmpty(userId);
   const txs = await listTransactions(userId);
   const history = await listMessages(userId);
 

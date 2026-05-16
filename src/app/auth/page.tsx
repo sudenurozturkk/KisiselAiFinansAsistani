@@ -57,7 +57,7 @@ function AuthContent() {
 
   // Handle demo mode from URL
   useEffect(() => {
-    if (modeParam === "demo") {
+    if (modeParam === "demo" && !demoLoading) {
       handleDemoLogin();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

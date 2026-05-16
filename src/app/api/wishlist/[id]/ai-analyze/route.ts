@@ -5,7 +5,6 @@ import {
   listTransactions,
   updateWishlistItem,
   getOrCreateUser,
-  seedTransactionsIfEmpty,
 } from "@/lib/repo";
 import { analyzeProduct } from "@/lib/gemini";
 
@@ -31,7 +30,7 @@ export async function POST(
     return NextResponse.json({ error: "Öğe bulunamadı" }, { status: 404 });
   }
 
-  await seedTransactionsIfEmpty(userId);
+
   const [user, txs] = await Promise.all([
     getOrCreateUser(userId),
     listTransactions(userId),

@@ -4,7 +4,6 @@ import {
   addTransaction,
   getOrCreateUser,
   listTransactions,
-  seedTransactionsIfEmpty,
 } from "@/lib/repo";
 import { buildInsights, summarizeFinance } from "@/lib/finance";
 import { detectAnomalies } from "@/lib/anomaly";
@@ -14,7 +13,6 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const userId = getUserIdFromReq(req);
   const user = await getOrCreateUser(userId);
-  await seedTransactionsIfEmpty(userId);
   const txs = await listTransactions(userId);
   const summary = summarizeFinance(txs, user.monthlyBudget);
   const insights = buildInsights(summary, user);
