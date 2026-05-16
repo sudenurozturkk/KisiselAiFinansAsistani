@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Sidebar from "@/components/Sidebar";
-import { ToastProvider } from "@/components/Toast";
+import AppShell from "@/components/AppShell";
 
 export const metadata: Metadata = {
   title: "Akıllı Finans Asistanı — AI Destekli Kişisel Finans Platformu",
@@ -35,14 +34,7 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <ToastProvider>
-          <div className="min-h-screen flex">
-            <Sidebar />
-            <main className="flex-1 p-4 pb-20 md:p-6 md:pb-6 lg:p-10 max-w-7xl mx-auto w-full">
-              {children}
-            </main>
-          </div>
-        </ToastProvider>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
