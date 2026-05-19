@@ -211,11 +211,50 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Finansal Sağlık Skoru + Insights */}
+      {/* Finansal Sağlık Skoru + Insights + Stat Kartlar (tek dengeli blok) */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
+        {/* Sol: Gauge — içeriği kadar yüksek */}
         <HealthScoreGauge score={healthScore} />
-        <div className="lg:col-span-3">
+
+        {/* Sağ: Insights üst satır + 4 stat alt satır */}
+        <div className="lg:col-span-3 flex flex-col gap-3">
           <InsightsRow insights={insights} />
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <StatCard
+              label="Bu ay gelir"
+              value={formatTRY(s.thisMonth.income)}
+              hint={`Geçen ay: ${formatTRY(s.lastMonth?.income ?? 0)}`}
+              tone="good"
+              icon={<ArrowUpRight size={18} />}
+            />
+            <StatCard
+              label="Bu ay gider"
+              value={formatTRY(s.thisMonth.expense)}
+              hint={`Geçen ay: ${formatTRY(s.lastMonth?.expense ?? 0)}`}
+              tone="bad"
+              icon={<ArrowDownRight size={18} />}
+            />
+            <StatCard
+              label="Net Tasarruf"
+              value={formatTRY(s.thisMonth.net)}
+              hint={s.thisMonth.net >= 0 ? "Bu ay pozitif bakiye" : "Bu ay açık veriliyor"}
+              tone={s.thisMonth.net >= 0 ? "good" : "bad"}
+              icon={<Wallet size={18} />}
+            />
+            <StatCard
+              label="Bütçe kullanımı"
+              value={`%${s.thisMonth.budgetUsedPct}`}
+              hint={`Bütçe: ${formatTRY(user.monthlyBudget)} • Hedef: ${formatTRY(user.savingsGoal)}`}
+              tone={
+                s.thisMonth.budgetUsedPct > 90
+                  ? "bad"
+                  : s.thisMonth.budgetUsedPct > 70
+                    ? "warn"
+                    : "good"
+              }
+              icon={<PiggyBank size={18} />}
+            />
+          </div>
         </div>
       </div>
 
@@ -327,43 +366,6 @@ export default function DashboardPage() {
           </p>
         )}
       </div>
-
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Bu ay gelir"
-          value={formatTRY(s.thisMonth.income)}
-          hint={`Geçen ay: ${formatTRY(s.lastMonth?.income ?? 0)}`}
-          tone="good"
-          icon={<ArrowUpRight size={18} />}
-        />
-        <StatCard
-          label="Bu ay gider"
-          value={formatTRY(s.thisMonth.expense)}
-          hint={`Geçen ay: ${formatTRY(s.lastMonth?.expense ?? 0)}`}
-          tone="bad"
-          icon={<ArrowDownRight size={18} />}
-        />
-        <StatCard
-          label="Net Tasarruf"
-          value={formatTRY(s.thisMonth.net)}
-          hint={s.thisMonth.net >= 0 ? "Bu ay pozitif bakiye" : "Bu ay açık veriliyor"}
-          tone={s.thisMonth.net >= 0 ? "good" : "bad"}
-          icon={<Wallet size={18} />}
-        />
-        <StatCard
-          label="Bütçe kullanımı"
-          value={`%${s.thisMonth.budgetUsedPct}`}
-          hint={`Bütçe: ${formatTRY(user.monthlyBudget)} • Hedef: ${formatTRY(user.savingsGoal)}`}
-          tone={
-            s.thisMonth.budgetUsedPct > 90
-              ? "bad"
-              : s.thisMonth.budgetUsedPct > 70
-                ? "warn"
-                : "good"
-          }
-          icon={<PiggyBank size={18} />}
-        />
-      </section>
 
       {/* Tasarruf Hedefi Progress */}
       {user.savingsGoal > 0 && (
