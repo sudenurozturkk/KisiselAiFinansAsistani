@@ -33,6 +33,7 @@ import {
   TrendingUp,
   Tag,
   ImageOff,
+  Pencil,
 } from "lucide-react";
 
 const URGENCY_OPTIONS: {
@@ -72,6 +73,16 @@ const VERDICT_CONFIG: Record<
   },
 };
 
+type EditForm = {
+  name: string;
+  price: string;
+  category: WishlistItem["category"];
+  priority: WishlistItem["priority"];
+  urgency: WishlistItem["urgency"];
+  note: string;
+  description: string;
+};
+
 export default function WishlistPage() {
   const [items, setItems] = useState<WishlistItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,6 +101,12 @@ export default function WishlistPage() {
   const [confirmDelete, setConfirmDelete] = useState<WishlistItem | null>(null);
   const [purchaseModal, setPurchaseModal] = useState<WishlistItem | null>(null);
   const [purchasePrice, setPurchasePrice] = useState("");
+  // Düzenleme modalı
+  const [editItem, setEditItem] = useState<WishlistItem | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>({
+    name: "", price: "", category: "Diğer", priority: 3, urgency: "istek", note: "", description: "",
+  });
+  const [editSaving, setEditSaving] = useState(false);
   const toast = useToast();
 
   // Form state
@@ -126,8 +143,8 @@ export default function WishlistPage() {
     setScrapeOk(false);
   }
 
-  async function load() {
-    setLoading(true);
+  async function load(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const r = await api.getWishlist();
       setItems(r.items);
@@ -138,15 +155,60 @@ export default function WishlistPage() {
         purchasedCount: r.purchasedCount,
       });
     } catch {
-      toast.error("Hata", "Liste yüklenemedi.");
+      if (!silent) toast.error("Hata", "Liste yüklenemedi.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
   useEffect(() => {
     load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function openEdit(item: WishlistItem) {
+    setEditItem(item);
+    setEditForm({
+      name: item.name,
+      price: item.price ? String(item.price) : "",
+      category: item.category,
+      priority: item.priority,
+      urgency: item.urgency,
+      note: item.note ?? "",
+      description: item.description ?? "",
+    });
+  }
+
+  async function handleEditSave() {
+    if (!editItem) return;
+    if (!editForm.name.trim()) { toast.error("Eksik", "Ürün adı gerekli."); return; }
+    setEditSaving(true);
+    // Optimistic update
+    setItems((prev) => prev.map((i) =>
+      i._id === editItem._id
+        ? { ...i, ...editForm, price: editForm.price ? Number(editForm.price) : i.price }
+        : i,
+    ));
+    try {
+      await api.updateWishlistItem(editItem._id, {
+        name: editForm.name.trim(),
+        price: editForm.price ? Number(editForm.price) : undefined,
+        category: editForm.category,
+        priority: editForm.priority,
+        urgency: editForm.urgency,
+        note: editForm.note.trim() || undefined,
+        description: editForm.description.trim() || undefined,
+      });
+      toast.success("Güncellendi", `"${editForm.name}" düzenlendi.`);
+      setEditItem(null);
+      load(true); // sessiz yenileme
+    } catch {
+      toast.error("Hata", "Güncellenemedi.");
+      load(true); // geri al
+    } finally {
+      setEditSaving(false);
+    }
+  }
 
   /** URL'den ürün bilgisi çek (scrape) ve forma doldur. */
   async function handleScrape() {
@@ -191,6 +253,7 @@ export default function WishlistPage() {
       return;
     }
     try {
+      const addedName = form.name;
       await api.addWishlistItem({
         name: form.name,
         url: form.url || undefined,
@@ -206,8 +269,8 @@ export default function WishlistPage() {
       });
       resetForm();
       setShowAdd(false);
-      await load();
-      toast.success("Eklendi", `"${form.name}" istek listesine eklendi.`);
+      toast.success("Eklendi", `"${addedName}" istek listesine eklendi.`);
+      load(true); // sessiz yenile — sayfa takılmaz
     } catch {
       toast.error("Hata", "Eklenemedi.");
     }
@@ -234,12 +297,15 @@ export default function WishlistPage() {
   }
 
   async function deleteItem(item: WishlistItem) {
+    // Optimistic: hemen listeden kaldır
+    setItems((prev) => prev.filter((i) => i._id !== item._id));
     try {
       await api.deleteWishlistItem(item._id);
-      await load();
       toast.success("Silindi", `"${item.name}" listeden çıkarıldı.`);
+      load(true);
     } catch {
       toast.error("Hata", "Silinemedi.");
+      load(true); // geri al
     }
   }
 
@@ -468,6 +534,7 @@ export default function WishlistPage() {
               analyzing={analyzingIds.has(item._id)}
               onRefreshPrice={() => refreshPrice(item)}
               onAiAnalyze={() => aiAnalyzeItem(item)}
+              onEdit={() => openEdit(item)}
               onPurchase={() => {
                 setPurchaseModal(item);
                 setPurchasePrice(
@@ -729,6 +796,111 @@ export default function WishlistPage() {
         )}
       </Modal>
 
+      {/* Düzenleme Modalı */}
+      <Modal
+        open={!!editItem}
+        onClose={() => setEditItem(null)}
+        title={`Düzenle — ${editItem?.name ?? ""}`}
+        size="md"
+        footer={
+          <>
+            <button onClick={() => setEditItem(null)} className="btn-ghost">İptal</button>
+            <button onClick={handleEditSave} disabled={editSaving || !editForm.name.trim()} className="btn-primary">
+              {editSaving ? <Loader2 size={16} className="animate-spin" /> : <Star size={16} />}
+              Kaydet
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="label">Ürün / Hizmet Adı *</label>
+            <input
+              className="input mt-1"
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Fiyat (₺)</label>
+              <input
+                type="number"
+                className="input mt-1"
+                placeholder="Fiyat"
+                value={editForm.price}
+                onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="label">Kategori</label>
+              <select
+                className="input mt-1"
+                value={editForm.category}
+                onChange={(e) => setEditForm({ ...editForm, category: e.target.value as WishlistItem["category"] })}
+              >
+                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Öncelik (1–5)</label>
+              <div className="flex gap-1 mt-1.5">
+                {([1, 2, 3, 4, 5] as const).map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setEditForm({ ...editForm, priority: n })}
+                    className="p-1"
+                    aria-label={`Öncelik ${n}`}
+                  >
+                    <Star
+                      size={20}
+                      className={`transition ${n <= editForm.priority ? "text-amber-400 fill-amber-400" : "text-slate-200 hover:text-amber-200"}`}
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="label">Aciliyet</label>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {URGENCY_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setEditForm({ ...editForm, urgency: opt.value })}
+                    className={`text-xs px-2.5 py-1 rounded-full font-medium transition ${editForm.urgency === opt.value ? opt.color : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="label">Açıklama</label>
+            <input
+              className="input mt-1"
+              placeholder="Ürün açıklaması"
+              value={editForm.description}
+              onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="label">Not</label>
+            <textarea
+              className="input mt-1"
+              rows={2}
+              placeholder="Kişisel notunuz"
+              value={editForm.note}
+              onChange={(e) => setEditForm({ ...editForm, note: e.target.value })}
+            />
+          </div>
+        </div>
+      </Modal>
+
       {/* Silme onayı */}
       <ConfirmDialog
         open={!!confirmDelete}
@@ -815,6 +987,7 @@ function ProductCard({
   analyzing,
   onRefreshPrice,
   onAiAnalyze,
+  onEdit,
   onPurchase,
   onDelete,
 }: {
@@ -823,6 +996,7 @@ function ProductCard({
   analyzing: boolean;
   onRefreshPrice: () => void;
   onAiAnalyze: () => void;
+  onEdit: () => void;
   onPurchase: () => void;
   onDelete: () => void;
 }) {
@@ -1026,7 +1200,14 @@ function ProductCard({
                   )}
                 </button>
               )}
-              {/* AI yorumu butonu kart içinde satır içi gösterilmektedir */}
+              <button
+                onClick={onEdit}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition"
+                title="Düzenle"
+                aria-label="Düzenle"
+              >
+                <Pencil size={14} />
+              </button>
               <button
                 onClick={onPurchase}
                 className="p-1.5 rounded-lg hover:bg-emerald-50 text-emerald-600 transition"

@@ -150,9 +150,12 @@ export default function DashboardPage() {
             Bu ayki finansal özetin ve AI destekli önerilerin.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Link href="/chat" className="btn-primary">
             AI ile konuş
+          </Link>
+          <Link href="/reports" className="btn-ghost flex items-center gap-1.5">
+            <BarChart3 size={15} /> Rapor İndir
           </Link>
           <Link href="/literacy" className="btn-ghost">
             Finansal Eğitim

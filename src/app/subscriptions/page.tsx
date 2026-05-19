@@ -15,6 +15,7 @@ import {
   XCircle,
   ArrowDownCircle,
   MessageSquare,
+  Pencil,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { Skeleton, Badge, Modal } from "@/components/ui";
@@ -40,6 +41,10 @@ export default function SubscriptionsPage() {
   const [saving, setSaving] = useState(false);
   const [optReport, setOptReport] = useState<import("@/lib/sub-optimizer").SubOptimizationReport | null>(null);
   const [optLoading, setOptLoading] = useState(false);
+  // Düzenleme modalı
+  const [editSub, setEditSub] = useState<Subscription | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", amount: "", frequency: "aylık" as Subscription["frequency"], category: "Eğlence" as Subscription["category"], nextPaymentDate: "", note: "" });
+  const [editSaving, setEditSaving] = useState(false);
   const toast = useToast();
 
   const [form, setForm] = useState({
@@ -51,21 +56,56 @@ export default function SubscriptionsPage() {
     note: "",
   });
 
-  async function load() {
-    setLoading(true);
+  async function load(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const r = await api.getSubscriptions();
       setData(r);
     } catch {
-      toast.error("Hata", "Abonelikler yüklenemedi.");
+      if (!silent) toast.error("Hata", "Abonelikler yüklenemedi.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
   useEffect(() => {
     load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function openEdit(sub: Subscription) {
+    setEditSub(sub);
+    setEditForm({
+      name: sub.name,
+      amount: String(sub.amount),
+      frequency: sub.frequency,
+      category: sub.category,
+      nextPaymentDate: sub.nextPaymentDate ?? "",
+      note: sub.note ?? "",
+    });
+  }
+
+  async function handleEditSave() {
+    if (!editSub || !editForm.name.trim() || !editForm.amount) return;
+    setEditSaving(true);
+    try {
+      await api.updateSubscription(editSub._id, {
+        name: editForm.name.trim(),
+        amount: Number(editForm.amount),
+        frequency: editForm.frequency,
+        category: editForm.category,
+        nextPaymentDate: editForm.nextPaymentDate || undefined,
+        note: editForm.note.trim() || undefined,
+      });
+      toast.success("Güncellendi", `"${editForm.name}" güncellendi.`);
+      setEditSub(null);
+      load(true);
+    } catch {
+      toast.error("Hata", "Güncellenemedi.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
 
   async function handleAdd() {
     if (!form.name.trim() || !form.amount) return;
@@ -104,12 +144,18 @@ export default function SubscriptionsPage() {
   }
 
   async function deleteSub(sub: Subscription) {
-    if (!confirm(`"${sub.name}" aboneliği silinsin mi?`)) return;
+    // Optimistic remove
+    setData((prev) => prev ? {
+      ...prev,
+      subscriptions: prev.subscriptions.filter((s) => s._id !== sub._id),
+    } : prev);
     try {
       await api.deleteSubscription(sub._id);
-      await load();
+      toast.success("Silindi", `"${sub.name}" kaldırıldı.`);
+      load(true);
     } catch {
       toast.error("Hata", "Silinemedi.");
+      load(true);
     }
   }
 
@@ -258,7 +304,7 @@ export default function SubscriptionsPage() {
             </h3>
           )}
           {activeSubs.map((sub) => (
-            <SubCard key={sub._id} sub={sub} onToggle={() => toggleActive(sub)} onDelete={() => deleteSub(sub)} />
+            <SubCard key={sub._id} sub={sub} onToggle={() => toggleActive(sub)} onEdit={() => openEdit(sub)} onDelete={() => deleteSub(sub)} />
           ))}
 
           {inactiveSubs.length > 0 && (
@@ -267,10 +313,55 @@ export default function SubscriptionsPage() {
             </h3>
           )}
           {inactiveSubs.map((sub) => (
-            <SubCard key={sub._id} sub={sub} onToggle={() => toggleActive(sub)} onDelete={() => deleteSub(sub)} />
+            <SubCard key={sub._id} sub={sub} onToggle={() => toggleActive(sub)} onEdit={() => openEdit(sub)} onDelete={() => deleteSub(sub)} />
           ))}
         </div>
       )}
+
+      {/* Düzenleme Modalı */}
+      <Modal open={!!editSub} onClose={() => setEditSub(null)} title={`Düzenle — ${editSub?.name ?? ""}`} size="md" footer={
+        <>
+          <button onClick={() => setEditSub(null)} className="btn-ghost">İptal</button>
+          <button onClick={handleEditSave} disabled={editSaving || !editForm.name.trim() || !editForm.amount} className="btn-primary">
+            {editSaving ? <Loader2 size={16} className="animate-spin" /> : <Pencil size={16} />} Kaydet
+          </button>
+        </>
+      }>
+        <div className="space-y-3">
+          <div>
+            <label className="label">Abonelik Adı *</label>
+            <input className="input mt-1" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Tutar (₺) *</label>
+              <input type="number" className="input mt-1" value={editForm.amount} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })} />
+            </div>
+            <div>
+              <label className="label">Sıklık</label>
+              <select className="input mt-1" value={editForm.frequency} onChange={(e) => setEditForm({ ...editForm, frequency: e.target.value as Subscription["frequency"] })}>
+                {FREQ_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Kategori</label>
+              <select className="input mt-1" value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value as Subscription["category"] })}>
+                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Sonraki Ödeme</label>
+              <input type="date" className="input mt-1" value={editForm.nextPaymentDate} onChange={(e) => setEditForm({ ...editForm, nextPaymentDate: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <label className="label">Not</label>
+            <input className="input mt-1" value={editForm.note} onChange={(e) => setEditForm({ ...editForm, note: e.target.value })} />
+          </div>
+        </div>
+      </Modal>
 
       {/* Ekleme Modalı */}
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Abonelik Ekle" footer={
@@ -354,10 +445,12 @@ export default function SubscriptionsPage() {
 function SubCard({
   sub,
   onToggle,
+  onEdit,
   onDelete,
 }: {
   sub: Subscription;
   onToggle: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }) {
   return (
@@ -401,18 +494,13 @@ function SubCard({
       </div>
 
       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <button
-          onClick={onToggle}
-          className={`p-1.5 rounded-lg ${sub.active ? "hover:bg-amber-50 text-amber-600" : "hover:bg-emerald-50 text-emerald-600"}`}
-          title={sub.active ? "Pasife al" : "Aktifleştir"}
-        >
+        <button onClick={onToggle} className={`p-1.5 rounded-lg ${sub.active ? "hover:bg-amber-50 text-amber-600" : "hover:bg-emerald-50 text-emerald-600"}`} title={sub.active ? "Pasife al" : "Aktifleştir"}>
           {sub.active ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
         </button>
-        <button
-          onClick={onDelete}
-          className="p-1.5 hover:bg-rose-50 text-rose-600 rounded-lg"
-          title="Sil"
-        >
+        <button onClick={onEdit} className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-lg" title="Düzenle">
+          <Pencil size={15} />
+        </button>
+        <button onClick={onDelete} className="p-1.5 hover:bg-rose-50 text-rose-600 rounded-lg" title="Sil">
           <Trash2 size={16} />
         </button>
       </div>
