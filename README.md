@@ -101,14 +101,15 @@ Tarayıcıdan `http://localhost:3000` adresine git.
 
 > **Önemli**: Tüm AI özellikleri (sohbet, öneriler, vision, simülatör, rapor vb.) yalnızca **gerçek Gemini API** ile çalışır. `GEMINI_API_KEY` yoksa bu uçlar **503** döner; sahte/mock yanıt üretilmez. API yanıtlarında `aiSource: "gemini"` ve `poweredBy: "Google Gemini"` alanları bulunur.
 
-## 💾 Demo veri depolama (yerel)
+## 💾 Demo veri depolama
 
 Bu proje **hackathon / demo** amaçlıdır; kalıcı veritabanı (PostgreSQL, MongoDB vb.) kullanılmaz.
 
 - Tüm kullanıcı verileri (işlemler, istek listesi, sohbet, abonelikler) sunucu tarafında **RAM + yerel dosya** ile tutulur.
-- Dosya yolu: `data/db.json` (proje kökünde, `.gitignore` ile repoya **girmez**).
+- **Jüri / deneme:** Repoda hazır demo veri seti vardır → `data/db.json` (clone sonrası ek kurulum gerekmez).
 - Sunucu yeniden başlatıldığında veriler diskten yüklenir.
-- Oturum kimliği tarayıcıda `localStorage` ile saklanır (`x-user-id` header).
+- Oturum kimliği tarayıcıda `localStorage` ile saklanır (`x-user-id` header). Demo hesap ile giriş yapın veya landing’deki demo akışını kullanın.
+- Yerelde yaptığınız değişiklikler `data/db.json` dosyasına yazılır; commit etmeden önce kişisel bilgi içermediğinden emin olun.
 - **Üretim ortamına taşınmamalı** — gerçek finans verisi için uygun değildir.
 
 ## 📁 Mimari

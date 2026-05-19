@@ -24,8 +24,9 @@ tsconfig.tsbuildinfo
 build-check.txt
 nb.txt
 
-# Persistent data store (kullanıcı verileri, lokal)
-data/
+# Persistent data store — demo db repoda; yerel yazma geçici dosyaları hariç
+data/*
+!data/db.json
 *.json.tmp
 
 # IDE
