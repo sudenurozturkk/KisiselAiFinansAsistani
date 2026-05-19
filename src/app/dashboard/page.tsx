@@ -51,6 +51,8 @@ import type {
   SpendingAnomaly,
 } from "@/lib/types";
 import type { EmotionalInsight } from "@/lib/emotional";
+import { AiPoweredBadge } from "@/components/AiPoweredBadge";
+import { useToast } from "@/components/Toast";
 import type { SmartAlert } from "@/lib/smart-alerts";
 import type { DailyTip } from "@/lib/daily-tips";
 import type { MarketPrice } from "@/lib/market";
@@ -60,8 +62,12 @@ export default function DashboardPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [mirrorInsights, setMirrorInsights] = useState<EmotionalInsight[]>([]);
   const [mirrorRiskDays, setMirrorRiskDays] = useState<string[]>([]);
+  const [mirrorAiSummary, setMirrorAiSummary] = useState("");
+  const [mirrorTriggers, setMirrorTriggers] = useState<string[]>([]);
+  const [mirrorRecommendations, setMirrorRecommendations] = useState<string[]>([]);
   const [mirrorLoading, setMirrorLoading] = useState(false);
   const [mirrorLoaded, setMirrorLoaded] = useState(false);
+  const toast = useToast();
   const [alerts, setAlerts] = useState<SmartAlert[]>([]);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [tips, setTips] = useState<DailyTip[]>([]);
@@ -108,9 +114,13 @@ export default function DashboardPage() {
       const r = await api.getEmotionalAnalysis();
       setMirrorInsights(r.insights || []);
       setMirrorRiskDays(r.riskDays || []);
+      setMirrorAiSummary(r.aiSummary || "");
+      setMirrorTriggers(r.emotionalTriggers || []);
+      setMirrorRecommendations(r.recommendations || []);
       setMirrorLoaded(true);
-    } catch {
-      // sessiz hata
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Duygusal analiz başarısız";
+      toast.error("AI analizi", msg);
     } finally {
       setMirrorLoading(false);
     }
@@ -330,8 +340,8 @@ export default function DashboardPage() {
       <div className="rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-50 to-indigo-50 p-4">
         <div className="flex items-center gap-2 mb-3">
           <Eye size={18} className="text-purple-600" />
-          <span className="font-semibold text-purple-900 text-sm">Finansal Ayna — Davranış Analizi</span>
-          <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">AI</span>
+          <span className="font-semibold text-purple-900 text-sm">Finansal Ayna — Duygusal Harcama Analizi</span>
+          <AiPoweredBadge />
           <button onClick={loadMirror} disabled={mirrorLoading} className="ml-auto flex items-center gap-1.5 text-xs bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded-lg font-medium transition disabled:opacity-60">
             {mirrorLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
             {mirrorLoaded ? "Yenile" : "Analiz Et"}
@@ -339,8 +349,22 @@ export default function DashboardPage() {
         </div>
         {mirrorLoaded && mirrorInsights.length > 0 ? (
           <>
+            {mirrorAiSummary && (
+              <p className="text-sm text-purple-900/90 leading-relaxed mb-3 bg-white/60 rounded-xl p-3 border border-purple-100">
+                {mirrorAiSummary}
+              </p>
+            )}
+            {mirrorTriggers.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {mirrorTriggers.map((t) => (
+                  <span key={t} className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {mirrorInsights.slice(0, 3).map((insight, i) => (
+              {mirrorInsights.slice(0, 6).map((insight, i) => (
                 <div
                   key={i}
                   className={`rounded-xl p-3 text-sm ${
@@ -371,10 +395,17 @@ export default function DashboardPage() {
                 <span>Bu hafta dikkat: <strong>{mirrorRiskDays.slice(0, 2).join(", ")}</strong></span>
               </div>
             )}
+            {mirrorRecommendations.length > 0 && (
+              <ul className="mt-3 space-y-1 text-xs text-purple-800 list-disc list-inside">
+                {mirrorRecommendations.slice(0, 4).map((rec) => (
+                  <li key={rec}>{rec}</li>
+                ))}
+              </ul>
+            )}
           </>
         ) : (
           <p className="text-xs text-purple-700/70 leading-relaxed">
-            {mirrorLoaded ? "Analiz için yeterli veri bulunamadı." : "Harcama alışkanlıklarınızı ve risk günlerinizi analiz etmek için butona tıklayın."}
+            {mirrorLoaded ? "Analiz için yeterli veri bulunamadı." : "Gemini AI ile duygusal harcama kalıplarınızı tespit etmek için Analiz Et'e tıklayın."}
           </p>
         )}
       </div>

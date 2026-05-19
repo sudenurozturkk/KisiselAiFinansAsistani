@@ -1,11 +1,8 @@
 /**
  * Finansal Ayna — Duygusal Harcama Analizi
  *
- * Kullanıcının harcama verilerinden gün/saat bazlı davranış kalıplarını
- * çıkarır. "Neden harcandığı"nı anlamaya çalışır.
- *
- * Hiçbir ML pipeline'ı gerektirmez — sadece istatistiksel desen eşleştirme
- * + Gemini API ile doğal dil yorumlama.
+ * İstatistiksel desenler (gün/saat matrisi) burada hesaplanır;
+ * yorum ve içgörü metinleri Gemini AI ile üretilir (bkz. gemini.ts).
  */
 import type { Transaction } from "./types";
 
@@ -43,12 +40,17 @@ export interface EmotionalInsight {
 export interface FinancialMirrorResult {
   patterns: TimePattern[];
   insights: EmotionalInsight[];
-  riskDays: string[];        // Risk günleri: "Perşembe akşam" vs.
-  safeDays: string[];        // Tasarruflu günler
+  riskDays: string[];
+  safeDays: string[];
   weekdayAvg: number;
   weekendAvg: number;
-  weekendPremium: number;    // Hafta sonu ne kadar fazla harcanıyor (%)
-  promptForAI: string;       // Gemini'ye gönderilecek özet veri
+  weekendPremium: number;
+  /** Gemini'nin yazdığı genel duygusal harcama özeti */
+  aiSummary: string;
+  /** Tespit edilen duygusal tetikleyiciler */
+  emotionalTriggers: string[];
+  /** Uygulanabilir öneriler */
+  recommendations: string[];
 }
 
 /* ─── Yardımcılar ──────────────────────────────────────────── */
@@ -63,9 +65,13 @@ function getHourSlot(hour: number): string {
 
 /* ─── Ana Analiz Fonksiyonu ────────────────────────────────── */
 
-export function analyzeEmotionalPatterns(
+/** Son 90 günün gün/saat harcama matrisi ve özet istatistikler (AI öncesi bağlam). */
+export function buildEmotionalSpendingContext(
   transactions: Transaction[],
-): FinancialMirrorResult {
+): Omit<
+  FinancialMirrorResult,
+  "insights" | "aiSummary" | "emotionalTriggers" | "recommendations"
+> & { promptForAI: string; expenseCount: number } {
   // Son 90 gündeki gider işlemlerini al
   const now = new Date();
   const cutoff = new Date(now.getTime() - 90 * 86_400_000);
@@ -76,13 +82,13 @@ export function analyzeEmotionalPatterns(
   if (expenses.length === 0) {
     return {
       patterns: [],
-      insights: [],
       riskDays: [],
       safeDays: [],
       weekdayAvg: 0,
       weekendAvg: 0,
       weekendPremium: 0,
       promptForAI: "Yeterli veri yok.",
+      expenseCount: 0,
     };
   }
 
@@ -151,119 +157,54 @@ export function analyzeEmotionalPatterns(
     ? Math.round(((weekendAvg - weekdayAvg) / weekdayAvg) * 100)
     : 0;
 
-  // Insights (içgörüler) üret
-  const insights: EmotionalInsight[] = [];
-
-  // 1. Yüksek sapma gösteren zaman dilimlerini bul
   const riskPatterns = patterns
     .filter((p) => p.deviationPct > 30 && p.txCount >= 2)
     .sort((a, b) => b.deviationPct - a.deviationPct);
-
-  for (const rp of riskPatterns.slice(0, 3)) {
-    insights.push({
-      type: "warning",
-      title: `${rp.dayLabel} ${rp.hourSlot.split(" ")[0]} tuzağı`,
-      description: `${rp.dayLabel} günleri ${rp.hourSlot.toLowerCase()} ortalamanın %${rp.deviationPct} üzerinde harcıyorsun. Bu muhtemelen ${rp.dayOfWeek === 5 ? "hafta sonu rehaveti" : rp.dayOfWeek >= 3 ? "hafta yorgunluğu" : "hafta başı stresi"} ile ilişkili.`,
-      dayLabel: rp.dayLabel,
-      hourSlot: rp.hourSlot,
-      severity: rp.deviationPct > 60 ? 5 : rp.deviationPct > 40 ? 4 : 3,
-    });
-  }
-
-  // 2. Hafta sonu paterni
-  if (weekendPremium > 20) {
-    insights.push({
-      type: "pattern",
-      title: "Hafta sonu harcama artışı",
-      description: `Hafta sonları ortalamanın %${weekendPremium} üzerinde harcıyorsun. (Hafta içi: ${weekdayAvg}₺, Hafta sonu: ${weekendAvg}₺)`,
-      severity: weekendPremium > 50 ? 4 : 3,
-    });
-  }
-
-  // 3. Tasarruflu zaman dilimleri
   const safePatterns = patterns
     .filter((p) => p.deviationPct < -20 && p.txCount >= 2)
     .sort((a, b) => a.deviationPct - b.deviationPct);
 
-  for (const sp of safePatterns.slice(0, 2)) {
-    insights.push({
-      type: "positive",
-      title: `${sp.dayLabel} ${sp.hourSlot.split(" ")[0]} disiplinli`,
-      description: `${sp.dayLabel} günleri ${sp.hourSlot.toLowerCase()} ortalamanın %${Math.abs(sp.deviationPct)} altında harcıyorsun. Bu disiplini diğer günlere de yay!`,
-      dayLabel: sp.dayLabel,
-      hourSlot: sp.hourSlot,
-      severity: 1,
-    });
-  }
-
-  // 4. Gece harcaması kontrolü
-  const nightSpending = patterns.filter((p) => p.hourSlot.includes("Gece"));
-  const nightTotal = nightSpending.reduce((s, p) => s + p.totalSpend, 0);
-  if (nightTotal > totalExpense * 0.15) {
-    insights.push({
-      type: "warning",
-      title: "Gece harcamaları yüksek",
-      description: `Toplam harcamanın %${Math.round((nightTotal / totalExpense) * 100)}'i gece saatlerinde gerçekleşiyor. Gece alışverişleri genellikle dürtüsel olur.`,
-      severity: 4,
-    });
-  }
-
-  // 5. Kategori bazlı desen analizi
-  const catTimeMap = new Map<string, { total: number; count: number; nightCount: number }>();
-  for (const tx of expenses) {
-    const d = new Date(tx.date);
-    const h = d.getHours();
-    const isNight = h >= 22 || h < 6;
-    const entry = catTimeMap.get(tx.category) || { total: 0, count: 0, nightCount: 0 };
-    entry.total += tx.amount;
-    entry.count += 1;
-    if (isNight) entry.nightCount += 1;
-    catTimeMap.set(tx.category, entry);
-  }
-
-  // Gece alışverişi yoğun kategoriler
-  for (const [cat, data] of catTimeMap) {
-    if (data.nightCount >= 3 && data.nightCount / data.count > 0.25) {
-      insights.push({
-        type: "warning",
-        title: `${cat} kategorisinde gece dürtüsü`,
-        description: `${cat} harcamalarının %${Math.round((data.nightCount / data.count) * 100)}'i gece saatlerinde. Bu genellikle dürtüsel karar vermeyle ilişkili. Sepete ekle, sabah tekrar bak!`,
-        severity: 3,
-      });
-    }
-  }
-
-  // 6. Maaş günü sonrası artış tespiti
-  const firstWeekSpend = expenses.filter((t) => {
-    const d = new Date(t.date).getDate();
-    return d <= 7;
-  }).reduce((s, t) => s + t.amount, 0);
-  const restSpend = totalExpense - firstWeekSpend;
-  const firstWeekRatio = firstWeekSpend / Math.max(1, totalExpense);
-  if (firstWeekRatio > 0.35) {
-    insights.push({
-      type: "pattern",
-      title: "Maaş günü harcama patlaması",
-      description: `Harcamalarının %${Math.round(firstWeekRatio * 100)}'i ayın ilk haftasında gerçekleşiyor. Maaş gelince harcama dürtüsü artıyor — otomatik tasarruf transferi kur!`,
-      severity: 3,
-    });
-  }
-
   const riskDays = riskPatterns.map((p) => `${p.dayLabel} ${p.hourSlot.split(" ")[0]}`);
   const safeDays = safePatterns.map((p) => `${p.dayLabel} ${p.hourSlot.split(" ")[0]}`);
 
-  // Gemini AI'ya gönderilecek özet prompt
-  const promptForAI = buildAIPrompt(patterns, insights, weekdayAvg, weekendAvg, weekendPremium);
+  const promptForAI = buildAIPrompt(
+    patterns,
+    weekdayAvg,
+    weekendAvg,
+    weekendPremium,
+    expenses,
+    riskDays,
+    safeDays,
+  );
 
   return {
     patterns: patterns.sort((a, b) => b.deviationPct - a.deviationPct),
-    insights,
     riskDays,
     safeDays,
     weekdayAvg,
     weekendAvg,
     weekendPremium,
     promptForAI,
+    expenseCount: expenses.length,
+  };
+}
+
+/** Geriye uyumluluk — yalnızca istatistik bağlamı (içgörüler boş). */
+export function analyzeEmotionalPatterns(
+  transactions: Transaction[],
+): FinancialMirrorResult {
+  const ctx = buildEmotionalSpendingContext(transactions);
+  return {
+    patterns: ctx.patterns,
+    insights: [],
+    riskDays: ctx.riskDays,
+    safeDays: ctx.safeDays,
+    weekdayAvg: ctx.weekdayAvg,
+    weekendAvg: ctx.weekendAvg,
+    weekendPremium: ctx.weekendPremium,
+    aiSummary: "",
+    emotionalTriggers: [],
+    recommendations: [],
   };
 }
 
@@ -271,37 +212,66 @@ export function analyzeEmotionalPatterns(
 
 function buildAIPrompt(
   patterns: TimePattern[],
-  insights: EmotionalInsight[],
   weekdayAvg: number,
   weekendAvg: number,
   weekendPremium: number,
+  expenses: Transaction[],
+  riskDays: string[],
+  safeDays: string[],
 ): string {
   const topRisk = patterns
     .filter((p) => p.deviationPct > 20)
-    .slice(0, 5)
-    .map((p) => `${p.dayLabel} ${p.hourSlot}: ortalamadan %${p.deviationPct} fazla (${p.txCount} işlem, ort. ${p.avgSpend}₺)`)
+    .slice(0, 8)
+    .map(
+      (p) =>
+        `${p.dayLabel} ${p.hourSlot}: ort. ${p.avgSpend}₺, %${p.deviationPct} sapma, ${p.txCount} işlem`,
+    )
     .join("\n");
 
   const topSafe = patterns
     .filter((p) => p.deviationPct < -15)
-    .slice(0, 3)
-    .map((p) => `${p.dayLabel} ${p.hourSlot}: ortalamadan %${Math.abs(p.deviationPct)} az`)
+    .slice(0, 5)
+    .map(
+      (p) =>
+        `${p.dayLabel} ${p.hourSlot}: ort. ${p.avgSpend}₺, %${Math.abs(p.deviationPct)} altında`,
+    )
     .join("\n");
 
-  return `## Kullanıcı Harcama Davranış Profili (Son 90 gün)
+  const catTotals = new Map<string, number>();
+  for (const tx of expenses) {
+    catTotals.set(tx.category, (catTotals.get(tx.category) ?? 0) + tx.amount);
+  }
+  const topCategories = [...catTotals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([c, a]) => `${c}: ${Math.round(a)}₺`)
+    .join(", ");
 
-Hafta içi ortalama: ${weekdayAvg}₺/işlem
-Hafta sonu ortalama: ${weekendAvg}₺/işlem
+  const sampleTxs = [...expenses]
+    .sort((a, b) => +new Date(b.date) - +new Date(a.date))
+    .slice(0, 40)
+    .map((t) => {
+      const d = new Date(t.date);
+      return `${d.toLocaleDateString("tr-TR")} ${DAY_LABELS[d.getDay()]} ${getHourSlot(d.getHours())} | ${t.category} | ${t.amount}₺ | ${t.note || "—"}`;
+    })
+    .join("\n");
+
+  return `## İstatistiksel Bağlam (Son 90 gün, ${expenses.length} gider)
+
+Hafta içi ort. işlem: ${weekdayAvg}₺
+Hafta sonu ort. işlem: ${weekendAvg}₺
 Hafta sonu primi: %${weekendPremium}
+En çok harcanan kategoriler: ${topCategories}
 
-### Risk Bölgeleri:
-${topRisk || "Belirgin risk bölgesi yok."}
+### Yüksek risk zaman dilimleri (istatistik):
+${topRisk || "—"}
 
-### Güvenli Bölgeler:
-${topSafe || "Belirgin güvenli bölge yok."}
+### Düşük harcama zaman dilimleri:
+${topSafe || "—"}
 
-### Tespit Edilen Davranış Kalıpları:
-${insights.map((i) => `- [${i.type}] ${i.title}: ${i.description}`).join("\n")}
+Ön hesaplanmış risk günleri: ${riskDays.join(", ") || "—"}
+Ön hesaplanmış güvenli günler: ${safeDays.join(", ") || "—"}
 
-Lütfen bu verileri psikolojik perspektiften yorumla. Duygusal tetikleyicileri tespit et, proaktif öneriler ver. Kullanıcıya empati göster ama gerçekçi ol.`;
+### Son işlemler (örnek):
+${sampleTxs}`;
 }

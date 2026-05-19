@@ -18,7 +18,8 @@ import type {
 import { summarizeFinance, formatTRY, buildInsights } from "./finance";
 import { detectAnomalies } from "./anomaly";
 import { listWishlistItems, listAssets } from "./repo";
-import { analyzeEmotionalPatterns } from "./emotional";
+import { generateEmotionalAnalysisWithGemini } from "./gemini";
+import { buildEmotionalSpendingContext } from "./emotional";
 import { fetchPrices, resolveSymbol, getMarketSummaryForAI, resolveAssetPrice } from "./market";
 import { scrapeWithPlaywright } from "./playwright-scraper";
 
@@ -431,24 +432,28 @@ function executeFinancialLiteracyExplain(
   };
 }
 
-function executeEmotionalPatterns(
+async function executeEmotionalPatterns(
   txs: Transaction[],
-): Record<string, unknown> {
-  const result = analyzeEmotionalPatterns(txs);
+  user: import("./types").UserProfile,
+): Promise<Record<string, unknown>> {
+  const ctx = buildEmotionalSpendingContext(txs);
+  const ai = await generateEmotionalAnalysisWithGemini(user, txs);
   return {
-    insightCount: result.insights.length,
-    riskDays: result.riskDays,
-    safeDays: result.safeDays,
-    weekdayAvg: result.weekdayAvg,
-    weekendAvg: result.weekendAvg,
-    weekendPremium: result.weekendPremium,
-    insights: result.insights.map((i) => ({
+    insightCount: ai.insights.length,
+    riskDays: ai.riskDays,
+    safeDays: ai.safeDays,
+    weekdayAvg: ctx.weekdayAvg,
+    weekendAvg: ctx.weekendAvg,
+    weekendPremium: ctx.weekendPremium,
+    aiSummary: ai.aiSummary,
+    emotionalTriggers: ai.emotionalTriggers,
+    recommendations: ai.recommendations,
+    insights: ai.insights.map((i) => ({
       type: i.type,
       title: i.title,
       description: i.description,
       severity: i.severity,
     })),
-    behaviorProfile: result.promptForAI,
   };
 }
 
@@ -474,7 +479,7 @@ async function executeTool(
     case "detect_anomalies":
       return executeDetectAnomalies(txs);
     case "analyze_emotional_patterns":
-      return executeEmotionalPatterns(txs);
+      return await executeEmotionalPatterns(txs, user);
     case "financial_literacy_explain":
       return executeFinancialLiteracyExplain(args);
     case "resolve_stock_symbol":

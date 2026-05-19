@@ -21,6 +21,8 @@ import type {
 import { summarizeFinance, formatTRY } from "./finance";
 import { detectAnomalies } from "./anomaly";
 import { runFinanceAgent } from "./agents";
+import type { EmotionalInsight, FinancialMirrorResult } from "./emotional";
+import { buildEmotionalSpendingContext } from "./emotional";
 
 /* ─── Tek API Key ───────────────────────────────────────────── */
 
@@ -921,4 +923,133 @@ Sadece JSON array döndür:
       ? t.category
       : "saving",
   }));
+}
+
+/* ─── Duygusal Harcama Analizi (Finansal Ayna) ───────────────── */
+
+export type EmotionalAiPayload = Pick<
+  FinancialMirrorResult,
+  | "insights"
+  | "aiSummary"
+  | "emotionalTriggers"
+  | "recommendations"
+  | "riskDays"
+  | "safeDays"
+>;
+
+/** İstatistik + işlem verisine dayalı Gemini duygusal harcama analizi. */
+export async function generateEmotionalAnalysisWithGemini(
+  user: UserProfile,
+  txs: Transaction[],
+): Promise<EmotionalAiPayload> {
+  assertGeminiConfigured();
+  const ctx = buildEmotionalSpendingContext(txs);
+
+  if (ctx.expenseCount < 3) {
+    throw new GeminiApiError(
+      "Duygusal analiz için en az 3 gider işlemi gerekli (son 90 gün).",
+    );
+  }
+
+  const prompt = `Sen davranışsal finans ve duygusal harcama uzmanısın. ${user.name} adlı kullanıcının gerçek harcama verilerini inceleyerek duygusal/dürtüsel kalıpları tespit et ve Türkçe yaz.
+
+KULLANICI: ${user.name}
+Aylık bütçe: ${formatTRY(user.monthlyBudget)} | Tasarruf hedefi: ${formatTRY(user.savingsGoal)}
+
+${ctx.promptForAI}
+
+GÖREV:
+1. Verideki gün/saat ve kategori desenlerinden duygusal tetikleyicileri çıkar (stres, can sıkıntısı, sosyal baskı, maaş günü coşkusu, gece dürtüsü vb.)
+2. Somut örneklerle (tutar, gün, kategori) en az 4 içgörü kartı üret
+3. riskDays ve safeDays listelerini veriye göre güncelle
+4. Empatik ama net bir özet ve 3-5 uygulanabilir öneri yaz
+5. Uydurma işlem icat etme — yalnızca verilen örneklerden yola çık
+
+Sadece JSON döndür:
+{
+  "insights": [
+    {
+      "type": "warning" | "pattern" | "positive",
+      "title": "kısa başlık",
+      "description": "2-3 cümle, ${user.name}'e hitaben, somut veri ile",
+      "dayLabel": "opsiyonel gün adı",
+      "hourSlot": "opsiyonel saat dilimi",
+      "severity": 1
+    }
+  ],
+  "aiSummary": "3-5 cümle genel duygusal harcama profili",
+  "emotionalTriggers": ["tetikleyici1", "tetikleyici2"],
+  "recommendations": ["öneri1", "öneri2", "öneri3"],
+  "riskDays": ["Cuma akşam"],
+  "safeDays": ["Pazartesi sabah"]
+}`;
+
+  const res = await callGemini(
+    (client, modelName) => {
+      const model = client.getGenerativeModel({
+        model: modelName,
+        generationConfig: { responseMimeType: "application/json" },
+      });
+      return model.generateContent(prompt);
+    },
+    { retries: 3, timeoutMs: 35000, label: "emotional-analysis" },
+  );
+
+  const text = res.response.text();
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
+
+  const rawInsights = Array.isArray(parsed.insights) ? parsed.insights : [];
+  const insights: EmotionalInsight[] = rawInsights
+    .filter((i: EmotionalInsight) => i?.title && i?.description)
+    .slice(0, 8)
+    .map((i: EmotionalInsight) => ({
+      type: ["warning", "pattern", "positive"].includes(i.type)
+        ? i.type
+        : "pattern",
+      title: String(i.title).slice(0, 120),
+      description: String(i.description).slice(0, 500),
+      dayLabel: i.dayLabel ? String(i.dayLabel) : undefined,
+      hourSlot: i.hourSlot ? String(i.hourSlot) : undefined,
+      severity: Math.min(5, Math.max(1, Number(i.severity) || 3)),
+    }));
+
+  if (insights.length === 0) {
+    throw new GeminiApiError(
+      "Gemini duygusal içgörü üretemedi. Lütfen tekrar deneyin.",
+    );
+  }
+
+  return {
+    insights,
+    aiSummary: String(parsed.aiSummary ?? "").slice(0, 1200),
+    emotionalTriggers: Array.isArray(parsed.emotionalTriggers)
+      ? parsed.emotionalTriggers.map(String).slice(0, 6)
+      : [],
+    recommendations: Array.isArray(parsed.recommendations)
+      ? parsed.recommendations.map(String).slice(0, 6)
+      : [],
+    riskDays: Array.isArray(parsed.riskDays)
+      ? parsed.riskDays.map(String)
+      : ctx.riskDays,
+    safeDays: Array.isArray(parsed.safeDays)
+      ? parsed.safeDays.map(String)
+      : ctx.safeDays,
+  };
+}
+
+/** Tam Finansal Ayna sonucu: istatistik + Gemini yorumu. */
+export async function analyzeEmotionalSpending(
+  user: UserProfile,
+  txs: Transaction[],
+): Promise<FinancialMirrorResult> {
+  const ctx = buildEmotionalSpendingContext(txs);
+  const ai = await generateEmotionalAnalysisWithGemini(user, txs);
+  return {
+    patterns: ctx.patterns,
+    weekdayAvg: ctx.weekdayAvg,
+    weekendAvg: ctx.weekendAvg,
+    weekendPremium: ctx.weekendPremium,
+    ...ai,
+  };
 }
