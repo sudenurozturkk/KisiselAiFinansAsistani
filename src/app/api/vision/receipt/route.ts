@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
+import { normalizeAmount, normalizeCategory, normalizeDate } from "@/lib/transaction-import";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -7,7 +8,7 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   if (!isGeminiEnabled()) {
     return NextResponse.json(
-      { error: "Gemini API key tanımlı değil (.env.local içine GEMINI_API_KEY_1 ekleyin)" },
+      { error: "Gemini API key tanımlı değil (.env.local içine GEMINI_API_KEY ekleyin)" },
       { status: 500 },
     );
   }
@@ -109,15 +110,34 @@ DOĞRULUK KURALLARI:
       );
     }
 
-    // Validasyon
-    if (parsed.confidence !== undefined && parsed.confidence < 0.3) {
+    const receipt = {
+      ...parsed,
+      storeName: String(parsed.storeName ?? "Bilinmeyen"),
+      date: normalizeDate(parsed.date).slice(0, 10),
+      totalAmount: normalizeAmount(parsed.totalAmount),
+      category: normalizeCategory(parsed.category),
+      confidence:
+        typeof parsed.confidence === "number" ? parsed.confidence : 0.8,
+    };
+
+    if (receipt.totalAmount <= 0) {
+      return NextResponse.json(
+        {
+          error: "Fiş tutarı okunamadı. Daha net bir fotoğraf deneyin.",
+          receipt,
+        },
+        { status: 422 },
+      );
+    }
+
+    if (receipt.confidence < 0.3) {
       return NextResponse.json({
-        receipt: parsed,
+        receipt,
         warning: "Fiş düşük güvenle okundu. Lütfen verileri kontrol edin.",
       });
     }
 
-    return NextResponse.json({ receipt: parsed });
+    return NextResponse.json({ receipt });
   } catch (err: unknown) {
     const msg = friendlyError(err);
     console.error("[vision/receipt] Hata:", msg);

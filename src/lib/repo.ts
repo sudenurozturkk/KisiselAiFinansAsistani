@@ -2,7 +2,7 @@
  * Veri Katmanı — In-Memory Store
  *
  * Tüm CRUD işlemleri burada merkezileştirilmiştir.
- * MongoDB tamamen kaldırılmıştır; uygulama in-memory çalışır.
+ * In-memory + yerel disk (data/db.json) — demo/hackathon veri katmanı.
  */
 import { genId, memdb, nowIso, persist } from "./store";
 import type {

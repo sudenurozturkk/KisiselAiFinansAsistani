@@ -76,6 +76,25 @@ export const api = {
   deleteTransaction: (id: string) =>
     call<{ ok: boolean }>(`/api/transactions/${id}`, { method: "DELETE" }),
 
+  importTransactions: (
+    transactions: Array<{
+      type?: string;
+      category?: string;
+      amount?: number;
+      note?: string;
+      description?: string;
+      date?: string;
+    }>,
+  ) =>
+    call<{
+      imported: number;
+      skipped: number;
+      transactions: Transaction[];
+    }>("/api/transactions/import", {
+      method: "POST",
+      body: JSON.stringify({ transactions }),
+    }),
+
   // İstek Listesi (Wishlist)
   getWishlist: () => call<WishlistResponse>("/api/wishlist"),
   addWishlistItem: (item: Partial<WishlistItem>) =>

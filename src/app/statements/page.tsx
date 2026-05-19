@@ -54,6 +54,13 @@ export default function StatementsPage() {
   const [filter, setFilter] = useState<"all" | "gelir" | "gider">("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [scanningReceipt, setScanningReceipt] = useState(false);
+  const [scannedReceipt, setScannedReceipt] = useState<{
+    storeName: string;
+    date: string;
+    totalAmount: number;
+    category: Transaction["category"];
+    items?: { name: string }[];
+  } | null>(null);
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvResult, setCsvResult] = useState<CSVImportResult | null>(null);
   const receiptInputRef = useRef<HTMLInputElement>(null);
@@ -87,15 +94,56 @@ export default function StatementsPage() {
 
   async function handleReceiptScan(file: File) {
     setScanningReceipt(true);
+    setScannedReceipt(null);
     try {
       const reader = new FileReader();
       const base64 = await new Promise<string>((resolve, reject) => { reader.onload = () => resolve((reader.result as string).split(",")[1]); reader.onerror = reject; reader.readAsDataURL(file); });
       const res = await api.scanReceipt(base64, file.type);
       const r = res.receipt;
-      setNewTx({ type: "gider", category: r.category as Transaction["category"], amount: String(r.totalAmount), note: r.storeName + (r.items?.length ? ` (${r.items.length} ürün)` : "") });
-      toast.success("Fiş okundu!", `${r.storeName} — ${r.totalAmount}₺`);
+      const receipt = {
+        storeName: r.storeName,
+        date: r.date,
+        totalAmount: r.totalAmount,
+        category: r.category as Transaction["category"],
+        items: r.items,
+      };
+      setScannedReceipt(receipt);
+      setNewTx({
+        type: "gider",
+        category: receipt.category,
+        amount: String(receipt.totalAmount),
+        note:
+          receipt.storeName +
+          (receipt.items?.length ? ` (${receipt.items.length} ürün)` : ""),
+      });
+      toast.success("Fiş okundu!", `${receipt.storeName} — ${receipt.totalAmount}₺`);
     } catch { toast.error("Fiş okunamadı", "Daha net fotoğraf deneyin."); }
     finally { setScanningReceipt(false); }
+  }
+
+  async function addScannedReceiptToHistory() {
+    if (!scannedReceipt) return;
+    try {
+      await api.addTransaction({
+        type: "gider",
+        category: scannedReceipt.category,
+        amount: scannedReceipt.totalAmount,
+        note:
+          scannedReceipt.storeName +
+          (scannedReceipt.items?.length
+            ? ` (${scannedReceipt.items.length} ürün)`
+            : ""),
+        date: scannedReceipt.date,
+      });
+      const t = await api.getTransactions();
+      setTx(t.transactions);
+      setScannedReceipt(null);
+      setNewTx({ type: "gider", category: "Gıda", amount: "", note: "" });
+      setActiveTab("history");
+      toast.success("Harcama geçmişine eklendi", scannedReceipt.storeName);
+    } catch {
+      toast.error("Hata", "İşlem kaydedilemedi.");
+    }
   }
 
   async function handleCSVImport(file: File) {
@@ -166,14 +214,54 @@ export default function StatementsPage() {
   }
 
   async function importSelected() {
-    if (!statement) return; setImporting(true);
+    if (!statement) return;
+    const toImport = statement.transactions.filter((_, i) => selectedTxs.has(i));
+    if (toImport.length === 0) {
+      toast.error("Seçim yok", "En az bir işlem seçin.");
+      return;
+    }
+    setImporting(true);
     try {
-      const toImport = statement.transactions.filter((_, i) => selectedTxs.has(i));
-      for (const stx of toImport) { await api.addTransaction({ type: stx.type === "gelir" ? "gelir" : "gider", amount: Math.abs(stx.amount), category: stx.category as import("@/lib/types").Category, note: stx.description, date: stx.date }); }
-      toast.success("İçe aktarıldı", `${toImport.length} işlem eklendi.`); setShowImport(false);
-      const t = await api.getTransactions(); setTx(t.transactions);
-    } catch { toast.error("Hata", "İçe aktarma başarısız."); }
-    finally { setImporting(false); }
+      const res = await api.importTransactions(
+        toImport.map((stx) => ({
+          type: stx.type,
+          category: stx.category,
+          amount: stx.amount,
+          description: stx.description,
+          date: stx.date,
+        })),
+      );
+      toast.success(
+        "İçe aktarıldı",
+        `${res.imported} işlem harcama geçmişine eklendi.`,
+      );
+      setShowImport(false);
+      setStatement(null);
+      setImagePreview(null);
+      setImageBase64(null);
+      setPdfBase64(null);
+      setPdfName(null);
+      setTextContent("");
+      const t = await api.getTransactions();
+      setTx(t.transactions);
+      setActiveTab("history");
+    } catch (e: unknown) {
+      toast.error(
+        "Hata",
+        e instanceof Error ? e.message : "İçe aktarma başarısız.",
+      );
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function toggleTxSelection(index: number) {
+    setSelectedTxs((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
   }
 
   const filteredTx = tx.filter((t) => { if (filter !== "all" && t.type !== filter) return false; if (categoryFilter !== "all" && t.category !== categoryFilter) return false; return true; });
@@ -207,6 +295,18 @@ export default function StatementsPage() {
               <input ref={csvInputRef} type="file" accept=".csv,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCSVImport(f); e.target.value = ""; }} />
             </div>
           </form>
+          {scannedReceipt && (
+            <div className="rounded-xl border border-brand-200 bg-brand-50 p-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm text-brand-800">
+                <span className="font-medium">{scannedReceipt.storeName}</span>
+                {" — "}
+                {formatTRY(scannedReceipt.totalAmount)} • {scannedReceipt.category}
+              </div>
+              <button type="button" onClick={addScannedReceiptToHistory} className="btn-primary text-xs">
+                Harcama geçmişine ekle
+              </button>
+            </div>
+          )}
           {csvResult && (<div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><div className="flex items-center gap-2 mb-1"><CheckCircle2 size={16} className="text-emerald-600" /><span className="font-medium text-sm text-emerald-800">Ekstre Aktarıldı</span></div><div className="text-xs text-emerald-700">{csvResult.rows.length} işlem • Gelir: {csvResult.totalIncome}₺ • Gider: {csvResult.totalExpense}₺</div><button onClick={() => setCsvResult(null)} className="text-xs text-emerald-600 underline mt-1">Kapat</button></div>)}
         </section>
       )}
@@ -272,7 +372,17 @@ export default function StatementsPage() {
               </div>
               <div className="card bg-gradient-to-r from-brand-50 to-indigo-50 border-brand-200 flex items-center justify-between gap-4">
                 <div><div className="font-semibold text-brand-800">İşlemleri içe aktar</div><div className="text-sm text-brand-600">{statement.transactions.length} işlem bulundu</div></div>
-                <button onClick={() => { setSelectedTxs(new Set(statement.transactions.map((_: StatementTx, i: number) => i))); setShowImport(true); }} className="btn-primary shrink-0">İçe Aktar <ArrowRight size={16} /></button>
+                <button type="button" onClick={() => { setSelectedTxs(new Set(statement.transactions.map((_: StatementTx, i: number) => i))); setShowImport(true); }} className="btn-primary shrink-0">İçe Aktar <ArrowRight size={16} /></button>
+              </div>
+              <div className="card !p-0 overflow-hidden">
+                <ul className="divide-y divide-slate-100 max-h-64 overflow-y-auto text-sm">
+                  {statement.transactions.map((stx: StatementTx, i: number) => (
+                    <li key={i} className="px-4 py-2 flex items-center justify-between gap-2">
+                      <span className="truncate"><span className="font-medium">{stx.description}</span><span className="text-xs text-slate-500 ml-2">{stx.date}</span></span>
+                      <span className="text-rose-600 shrink-0">-{formatTRY(stx.amount)}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           )}
@@ -306,8 +416,22 @@ export default function StatementsPage() {
         </section>
       )}
 
-      <Modal open={showImport} onClose={() => setShowImport(false)} title="İşlemleri İçe Aktar" size="sm" footer={<><button onClick={() => setShowImport(false)} className="btn-ghost">İptal</button><button onClick={importSelected} disabled={importing} className="btn-primary">{importing ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Ekle</button></>}>
-        <p className="text-sm text-slate-700">Seçili <strong>{selectedTxs.size} işlem</strong> harcama geçmişinize eklenecek.</p>
+      <Modal open={showImport} onClose={() => setShowImport(false)} title="İşlemleri İçe Aktar" size="md" footer={<><button type="button" onClick={() => setShowImport(false)} className="btn-ghost">İptal</button><button type="button" onClick={importSelected} disabled={importing || selectedTxs.size === 0} className="btn-primary">{importing ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Harcama geçmişine ekle</button></>}>
+        <p className="text-sm text-slate-700 mb-3">Seçili <strong>{selectedTxs.size} işlem</strong> kaydedilecek.</p>
+        {statement && (
+          <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto text-sm border rounded-xl">
+            {statement.transactions.map((stx: StatementTx, i: number) => (
+              <li key={i} className="px-3 py-2 flex items-center gap-3">
+                <input type="checkbox" checked={selectedTxs.has(i)} onChange={() => toggleTxSelection(i)} className="rounded" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{stx.description}</div>
+                  <div className="text-xs text-slate-500">{stx.date} • {stx.category}</div>
+                </div>
+                <span className="text-rose-600 shrink-0">-{formatTRY(stx.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </Modal>
 
       <Modal open={!!editTx} onClose={() => setEditTx(null)} title="İşlem Düzenle" footer={<><button onClick={() => setEditTx(null)} className="btn-ghost">İptal</button><button onClick={updateTx} className="btn-primary">Kaydet</button></>}>

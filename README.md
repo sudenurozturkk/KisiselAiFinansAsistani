@@ -70,7 +70,7 @@ Kişisel finans yönetimi + akıllı alışveriş önerilerini birleştiren, **G
 | AI | @google/generative-ai (Gemini) |
 | İkonlar | Lucide React |
 | Test | Vitest |
-| Veri | In-memory store |
+| Veri | In-memory + yerel disk (`data/db.json`) |
 
 ## 🚀 Kurulum
 
@@ -96,9 +96,20 @@ Tarayıcıdan `http://localhost:3000` adresine git.
 | Değişken | Açıklama | Zorunlu |
 |----------|----------|---------|
 | `GEMINI_API_KEY` | Google AI Studio API anahtarı | Hayır (mock fallback) |
-| `GEMINI_MODEL` | Kullanılacak model (varsayılan: `gemini-2.0-flash`) | Hayır |
+| `GEMINI_MODEL` | Kullanılacak model (varsayılan: `gemini-2.5-flash`) | Hayır |
+| `TWELVEDATA_API_KEY` | Piyasa fiyatları (opsiyonel) | Hayır |
 
 > **Not**: API anahtarı olmadan UI tamamen çalışır; Gemini gerektiren özellikler mock yanıt üretir.
+
+## 💾 Demo veri depolama (yerel)
+
+Bu proje **hackathon / demo** amaçlıdır; kalıcı veritabanı (PostgreSQL, MongoDB vb.) kullanılmaz.
+
+- Tüm kullanıcı verileri (işlemler, istek listesi, sohbet, abonelikler) sunucu tarafında **RAM + yerel dosya** ile tutulur.
+- Dosya yolu: `data/db.json` (proje kökünde, `.gitignore` ile repoya **girmez**).
+- Sunucu yeniden başlatıldığında veriler diskten yüklenir.
+- Oturum kimliği tarayıcıda `localStorage` ile saklanır (`x-user-id` header).
+- **Üretim ortamına taşınmamalı** — gerçek finans verisi için uygun değildir.
 
 ## 📁 Mimari
 
@@ -116,6 +127,7 @@ src/
     literacy/page.tsx         # Finansal okuryazarlık
     subscriptions/page.tsx    # Abonelik yönetimi
     profile/page.tsx          # Profil ve işlem yönetimi
+    statements/page.tsx       # Harcamalar, ekstre analizi, içe aktarma
     api/                      # API route'ları
   components/
     AppShell.tsx              # Koşullu layout (sidebar/auth)
@@ -126,8 +138,9 @@ src/
     Toast.tsx                 # Bildirim sistemi
     ui.tsx                    # Modal, Avatar, Skeleton, Badge...
   lib/
-    store.ts                  # In-memory veri deposu
-    repo.ts                   # CRUD işlemleri + seed data
+    store.ts                  # In-memory + data/db.json kalıcılık
+    repo.ts                   # CRUD işlemleri + demo seed
+    transaction-import.ts     # Ekstre/fiş içe aktarma normalizasyonu
     gemini.ts                 # Gemini AI istemcisi + araçlar
     agents.ts                 # Agentic AI tool definitions
     finance.ts                # Finansal hesaplamalar

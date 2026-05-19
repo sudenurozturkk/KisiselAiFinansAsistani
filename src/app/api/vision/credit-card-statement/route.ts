@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
+import { normalizeStatementPayload } from "@/lib/transaction-import";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,7 +13,7 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   if (!isGeminiEnabled()) {
     return NextResponse.json(
-      { error: "Gemini API key tanımlı değil (.env.local içine GEMINI_API_KEY_1 ekleyin)" },
+      { error: "Gemini API key tanımlı değil (.env.local içine GEMINI_API_KEY ekleyin)" },
       { status: 500 },
     );
   }
@@ -130,7 +131,22 @@ KURALLAR:
       );
     }
 
-    return NextResponse.json({ statement: parsed });
+    const statement = normalizeStatementPayload(
+      parsed as Record<string, unknown>,
+    );
+
+    if (statement.transactions.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Ekstreden işlem çıkarılamadı. Daha net bir görüntü veya metin deneyin.",
+          statement,
+        },
+        { status: 422 },
+      );
+    }
+
+    return NextResponse.json({ statement });
   } catch (err: unknown) {
     const msg = friendlyError(err);
     console.error("[vision/credit-card-statement] Hata:", msg);

@@ -1,13 +1,8 @@
 /**
  * Gemini AI entegrasyonu — Agentic yapı desteğiyle.
  *
- * Gemini API varsa: Function calling destekli agentic chat
- * Gemini API yoksa: Mock fallback yanıtlar (UI tamamen çalışır)
- *
- * Çoklu API Key Desteği:
- * .env.local'e GEMINI_API_KEY_1 ~ GEMINI_API_KEY_5 tanımlayarak
- * kota aşımında otomatik key rotasyonu sağlanır.
- * Geriye uyumlu: Tek GEMINI_API_KEY de desteklenir.
+ * Tek ortam değişkeni: GEMINI_API_KEY (.env.local)
+ * API yoksa mock fallback yanıtlar (UI tamamen çalışır).
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type {
@@ -21,133 +16,36 @@ import { summarizeFinance, formatTRY } from "./finance";
 import { detectAnomalies } from "./anomaly";
 import { runFinanceAgent } from "./agents";
 
-/* ─── Multi-Key Rotasyon Sistemi ───────────────────────────── */
+/* ─── Tek API Key ───────────────────────────────────────────── */
 
-/**
- * Maksimum tanımlanabilir Gemini API key sayısı.
- * .env.local'de `GEMINI_API_KEY_1` ~ `GEMINI_API_KEY_${MAX_API_KEYS}`
- * şeklinde tanımlanabilir.
- */
-const MAX_API_KEYS = 20;
-
-/** Tüm geçerli API key'lerini topla (boş olmayanlar, tekilleştirilmiş). */
-function collectApiKeys(): string[] {
-  const seen = new Set<string>();
-  const keys: string[] = [];
-  for (let i = 1; i <= MAX_API_KEYS; i++) {
-    const k = process.env[`GEMINI_API_KEY_${i}`]?.trim();
-    if (k && !seen.has(k)) {
-      seen.add(k);
-      keys.push(k);
-    }
-  }
-  // Geriye uyumluluk: tek GEMINI_API_KEY varsa ve listede yoksa ekle
-  const legacy = process.env.GEMINI_API_KEY?.trim();
-  if (legacy && !seen.has(legacy)) {
-    seen.add(legacy);
-    keys.push(legacy);
-  }
-  return keys;
-}
-
-/** Round-robin sayacı (sunucu ömrü boyunca). */
-let keyIndex = 0;
-
-/** Cooldown takibi — 429/5xx alan key'ler geçici olarak devre dışı. */
-const keyCooldowns = new Map<string, number>(); // key → Date.now() + ms
-
-/**
- * Kalıcı olarak devre dışı bırakılmış (geçersiz / yetkisiz) key'ler.
- * 401/403 alan key'ler buraya eklenir ve süreç boyunca bir daha denenmez.
- */
-const deadKeys = new Set<string>();
-
-/** Bir sonraki kullanılabilir key'i al (round-robin + cooldown + dead filtreli). */
-function getNextApiKey(): string {
-  const allKeys = collectApiKeys();
-  const keys = allKeys.filter((k) => !deadKeys.has(k));
-  if (keys.length === 0) return "";
-
-  const now = Date.now();
-  for (const [k, until] of keyCooldowns) {
-    if (until <= now) keyCooldowns.delete(k);
-  }
-
-  for (let attempt = 0; attempt < keys.length; attempt++) {
-    const idx = (keyIndex + attempt) % keys.length;
-    const key = keys[idx]!;
-    const cooldownUntil = keyCooldowns.get(key) ?? 0;
-    if (cooldownUntil <= now) {
-      keyIndex = (idx + 1) % keys.length;
-      return key;
-    }
-  }
-
-  let bestKey = keys[0]!;
-  let bestTime = Infinity;
-  for (const key of keys) {
-    const until = keyCooldowns.get(key) ?? 0;
-    if (until < bestTime) {
-      bestTime = until;
-      bestKey = key;
-    }
-  }
-  return bestKey;
-}
-
-/** 429/5xx alan key'i geçici olarak devre dışı bırak. */
-function markKeyRateLimited(key: string, cooldownMs = 15_000) {
-  keyCooldowns.set(key, Date.now() + cooldownMs);
-  const totalCount = collectApiKeys().length;
-  const aliveCount = totalCount - deadKeys.size;
-  console.warn(
-    `[gemini] Key ...${key.slice(-6)} cooldown ${cooldownMs / 1000}s. ` +
-      `(canlı ${aliveCount}/${totalCount})`,
-  );
-}
-
-/** 401/403 alan key'i kalıcı olarak devre dışı bırak. */
-function markKeyDead(key: string, reason: string) {
-  if (deadKeys.has(key)) return;
-  deadKeys.add(key);
-  const totalCount = collectApiKeys().length;
-  const aliveCount = totalCount - deadKeys.size;
-  console.error(
-    `[gemini] Key ...${key.slice(-6)} KALICI olarak devre dışı (${reason}). ` +
-      `(canlı ${aliveCount}/${totalCount})`,
-  );
+function getApiKey(): string {
+  return process.env.GEMINI_API_KEY?.trim() ?? "";
 }
 
 function getModelName() {
-  return process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  return process.env.GEMINI_MODEL || "gemini-2.5-flash";
 }
 
-/** Gemini API etkin mi? (en az 1 key var mı) */
+/** Gemini API etkin mi? */
 export function isGeminiEnabled(): boolean {
-  return collectApiKeys().length > 0;
+  return getApiKey().length > 0;
 }
-// Geriye uyumluluk: modül yüklendiğinde boolean gibi çalışması gerekiyorsa
-// export const isGeminiEnabled = ... yerine fonksiyon kullanıyoruz.
 
 function getClient(): GoogleGenerativeAI | null {
-  const key = getNextApiKey();
+  const key = getApiKey();
   return key ? new GoogleGenerativeAI(key) : null;
 }
 
-/** Mevcut key havuzu durumu (debug / monitoring). */
+/** API key durumu (debug / monitoring). */
 export function getKeyPoolStatus() {
-  const keys = collectApiKeys();
-  const now = Date.now();
-  const dead = keys.filter((k) => deadKeys.has(k)).length;
-  const alive = keys.filter((k) => !deadKeys.has(k));
-  const active = alive.filter((k) => (keyCooldowns.get(k) ?? 0) <= now).length;
-  const cooldown = alive.length - active;
+  const configured = isGeminiEnabled();
   return {
-    total: keys.length,
-    alive: alive.length,
-    active,
-    cooldown,
-    dead,
+    configured,
+    total: configured ? 1 : 0,
+    alive: configured ? 1 : 0,
+    active: configured ? 1 : 0,
+    cooldown: 0,
+    dead: 0,
   };
 }
 
@@ -216,11 +114,6 @@ export async function withRetry<T>(
       const isTimeout = msg.includes("timeout");
       const isRetryable = is429 || is5xx || isTimeout;
 
-      if (is429) {
-        const currentKey = getNextApiKey();
-        if (currentKey) markKeyRateLimited(currentKey);
-      }
-
       if (isRetryable && i < retries) {
         const base = is429 ? 1500 : is5xx ? 1000 : 400;
         const waitMs = Math.min(base * Math.pow(2, i), 8000);
@@ -230,7 +123,7 @@ export async function withRetry<T>(
             ? "Sunucu hatası (5xx)"
             : "Timeout";
         console.warn(
-          `[gemini] ${reason} — ${waitMs / 1000}s backoff, key rotasyonu (deneme ${i + 2}/${retries + 1})`,
+          `[gemini] ${reason} — ${waitMs / 1000}s backoff (deneme ${i + 2}/${retries + 1})`,
         );
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
@@ -244,10 +137,8 @@ export async function withRetry<T>(
 }
 
 /**
- * Gemini çağrısı için akıllı wrapper:
- *  - Her denemede yeni `getClient()` (key rotation otomatik)
- *  - 429/5xx/timeout için exponential backoff retry
- *  - Tüm key'ler tükenirse null döner (caller mock fallback'e geçer)
+ * Gemini çağrısı — tek API key, 429/5xx/timeout için retry.
+ * Key yoksa null (caller mock fallback).
  */
 export async function callGemini<T>(
   task: (
@@ -256,93 +147,22 @@ export async function callGemini<T>(
   ) => Promise<T>,
   options: { retries?: number; timeoutMs?: number; label?: string } = {},
 ): Promise<T | null> {
-  const retries = options.retries ?? 3;
-  const timeoutMs = options.timeoutMs ?? 30000;
+  const client = getClient();
+  if (!client) return null;
+
+  const modelName = getModelName();
   const label = options.label ?? "gemini";
 
-  if (collectApiKeys().length === 0) return null;
-
-  let lastError: unknown;
-  for (let i = 0; i <= retries; i++) {
-    const usedKey = getNextApiKey();
-    if (!usedKey) {
-      console.error(`[${label}] Kullanılabilir key kalmadı (hepsi ölü).`);
-      return null;
-    }
-    const client = new GoogleGenerativeAI(usedKey);
-    const modelName = getModelName();
-    try {
-      return await withTimeout(task(client, modelName), timeoutMs, label);
-    } catch (err: unknown) {
-      lastError = err;
-      const msg = err instanceof Error ? err.message : String(err);
-
-      const is401_403 =
-        msg.includes("401") ||
-        msg.includes("403") ||
-        msg.includes("API_KEY_INVALID") ||
-        msg.includes("PERMISSION_DENIED") ||
-        msg.includes("denied access") ||
-        msg.includes("Forbidden") ||
-        msg.includes("Unauthorized") ||
-        msg.includes("not valid");
-      const is429 =
-        !is401_403 &&
-        (msg.includes("429") ||
-          msg.includes("quota") ||
-          msg.includes("Too Many Requests"));
-      const is5xx =
-        !is401_403 &&
-        (msg.includes("503") ||
-          msg.includes("500") ||
-          msg.includes("502") ||
-          msg.includes("504") ||
-          msg.includes("Service Unavailable") ||
-          msg.includes("Internal Server Error") ||
-          msg.includes("Bad Gateway") ||
-          msg.includes("Gateway Timeout") ||
-          msg.includes("high demand") ||
-          msg.includes("overloaded"));
-      const isTimeout = msg.includes("timeout");
-
-      // 401/403/400-invalid → key kalıcı olarak öldür, hemen başka key dene
-      if (is401_403) {
-        const reason =
-          msg.includes("403") || msg.includes("denied") || msg.includes("PERMISSION_DENIED")
-            ? "403 Forbidden (project denied)"
-            : msg.includes("API_KEY_INVALID") || msg.includes("not valid")
-              ? "400 API_KEY_INVALID"
-              : "401 Unauthorized";
-        markKeyDead(usedKey, reason);
-      } else if (is429) {
-        markKeyRateLimited(usedKey, 60_000);
-      } else if (is5xx) {
-        markKeyRateLimited(usedKey, 8_000);
-      }
-
-      const isRetryable = is401_403 || is429 || is5xx || isTimeout;
-
-      if (isRetryable && i < retries) {
-        // 401/403 ve 5xx için hemen başka key dene — kullanıcıyı bekletme
-        const base = is429 ? 1500 : is401_403 ? 0 : is5xx ? 500 : 400;
-        const waitMs = base === 0 ? 0 : Math.min(base * Math.pow(2, i), 8000);
-        const reason = is401_403
-          ? "Geçersiz key (400/401/403)"
-          : is429
-            ? "Rate limit (429)"
-            : is5xx
-              ? "Sunucu hatası (5xx)"
-              : "Timeout";
-        console.warn(
-          `[${label}] ${reason} → ${waitMs}ms backoff, farklı key (deneme ${i + 2}/${retries + 1})`,
-        );
-        if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
-        continue;
-      }
-      throw err;
-    }
+  try {
+    return await withRetry(
+      () => withTimeout(task(client, modelName), options.timeoutMs ?? 30000, label),
+      options.retries ?? 3,
+      options.timeoutMs ?? 30000,
+    );
+  } catch (err) {
+    console.error(`[${label}]`, err instanceof Error ? err.message : err);
+    return null;
   }
-  throw lastError instanceof Error ? lastError : new Error("Retry exhausted");
 }
 
 export function friendlyError(err: unknown): string {
