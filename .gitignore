@@ -31,5 +31,10 @@ data/
 # IDE
 .vscode/
 .idea/
+.vs/
 *.swp
 *.swo
+
+# Geçici commit message dosyaları
+.commit_msg.tmp
+*.commit_msg.tmp
