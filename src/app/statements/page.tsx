@@ -7,7 +7,7 @@ import { CATEGORIES, type Transaction } from "@/lib/types";
 import {
   CreditCard, Upload, FileText, CheckCircle2, AlertTriangle,
   Loader2, Plus, X, ChevronDown, ChevronRight,
-  Sparkles, ArrowRight, Camera, Trash2, Edit2, Receipt,
+  Sparkles, ArrowRight, Camera, Trash2, Edit2, Receipt, File,
 } from "lucide-react";
 import { formatTRY } from "@/lib/finance";
 import Link from "next/link";
@@ -31,11 +31,13 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export default function StatementsPage() {
   const [activeTab, setActiveTab] = useState<"add" | "statement" | "history">("add");
-  const [mode, setMode] = useState<"image" | "text">("image");
+  const [mode, setMode] = useState<"image" | "text" | "pdf">("image");
   const [dragging, setDragging] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imageMime, setImageMime] = useState("image/jpeg");
+  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
+  const [pdfName, setPdfName] = useState<string | null>(null);
   const [textContent, setTextContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [statement, setStatement] = useState<StatementResult | null>(null);
@@ -44,6 +46,7 @@ export default function StatementsPage() {
   const [importing, setImporting] = useState(false);
   const [selectedTxs, setSelectedTxs] = useState<Set<number>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
 
   const [tx, setTx] = useState<Transaction[]>([]);
   const [newTx, setNewTx] = useState<{ type: "gelir" | "gider"; category: Transaction["category"]; amount: string; note: string }>({ type: "gider", category: "Gıda", amount: "", note: "" });
@@ -115,12 +118,45 @@ export default function StatementsPage() {
     reader.readAsDataURL(file);
   }
 
-  const handleDrop = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragging(false); const file = e.dataTransfer.files[0]; if (file) handleFile(file); }, []);
+  function handlePdfFile(file: File) {
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Hata", "Lütfen bir PDF dosyası seçin.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      setPdfBase64(dataUrl.split(",")[1] || "");
+      setPdfName(file.name);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+      setMode("pdf");
+      handlePdfFile(file);
+    } else {
+      handleFile(file);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function analyze() {
     setLoading(true); setStatement(null); setWarning(null);
     try {
-      const payload = mode === "image" ? { image: imageBase64!, mimeType: imageMime } : { textContent };
+      let payload: Record<string, string>;
+      if (mode === "image") {
+        payload = { image: imageBase64!, mimeType: imageMime };
+      } else if (mode === "pdf") {
+        payload = { image: pdfBase64!, mimeType: "application/pdf" };
+      } else {
+        payload = { textContent };
+      }
       const res = await api.scanCreditCardStatement(payload);
       setStatement(res.statement);
       if ((res as { warning?: string }).warning) setWarning((res as { warning?: string }).warning || null);
@@ -179,17 +215,52 @@ export default function StatementsPage() {
         <div className="space-y-6">
           <div className="card !p-2 flex gap-1 w-fit">
             <button onClick={() => setMode("image")} className={`px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 ${mode === "image" ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}><Upload size={15} /> Fotoğraf</button>
+            <button onClick={() => setMode("pdf")} className={`px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 ${mode === "pdf" ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}><File size={15} /> PDF</button>
             <button onClick={() => setMode("text")} className={`px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 ${mode === "text" ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}><FileText size={15} /> Metin</button>
           </div>
-          {mode === "image" ? (
+
+          {mode === "image" && (
             <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop} onClick={() => fileRef.current?.click()} className={`card border-2 border-dashed cursor-pointer transition-all flex flex-col items-center justify-center py-12 gap-4 ${dragging ? "border-brand-400 bg-brand-50" : "border-slate-200 hover:border-brand-300"}`}>
               <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
               {imagePreview ? (<div className="flex flex-col items-center gap-3">{/* eslint-disable-next-line @next/next/no-img-element */}<img src={imagePreview} alt="Ekstre" className="max-h-48 rounded-xl shadow-md object-contain" /><div className="text-sm text-emerald-600 font-medium"><CheckCircle2 size={16} className="inline mr-1" />Yüklendi</div><button onClick={(e) => { e.stopPropagation(); setImagePreview(null); setImageBase64(null); }} className="text-xs text-slate-400 hover:text-rose-500"><X size={12} className="inline" /> Kaldır</button></div>) : (<><div className="w-16 h-16 rounded-2xl bg-brand-50 grid place-items-center"><Upload size={28} className="text-brand-400" /></div><div className="text-center"><div className="font-medium text-slate-700">Ekstre fotoğrafını sürükle veya tıkla</div><div className="text-sm text-slate-400 mt-1">JPG, PNG, WEBP</div></div></>)}
             </div>
-          ) : (
+          )}
+
+          {mode === "pdf" && (
+            <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop} onClick={() => pdfRef.current?.click()} className={`card border-2 border-dashed cursor-pointer transition-all flex flex-col items-center justify-center py-12 gap-4 ${dragging ? "border-brand-400 bg-brand-50" : "border-slate-200 hover:border-brand-300"}`}>
+              <input ref={pdfRef} type="file" accept=".pdf,application/pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePdfFile(f); e.target.value = ""; }} />
+              {pdfBase64 ? (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-16 h-16 rounded-2xl bg-rose-50 grid place-items-center"><File size={28} className="text-rose-500" /></div>
+                  <div className="text-sm text-emerald-600 font-medium"><CheckCircle2 size={16} className="inline mr-1" />{pdfName ?? "PDF yüklendi"}</div>
+                  <button onClick={(e) => { e.stopPropagation(); setPdfBase64(null); setPdfName(null); }} className="text-xs text-slate-400 hover:text-rose-500"><X size={12} className="inline" /> Kaldır</button>
+                </div>
+              ) : (
+                <>
+                  <div className="w-16 h-16 rounded-2xl bg-rose-50 grid place-items-center"><File size={28} className="text-rose-400" /></div>
+                  <div className="text-center">
+                    <div className="font-medium text-slate-700">PDF ekstresini sürükle veya tıkla</div>
+                    <div className="text-sm text-slate-400 mt-1">Kredi kartı ekstresi PDF • AI okuyup işlem listesi çıkarır</div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {mode === "text" && (
             <div className="card space-y-3"><label className="label">Ekstre metnini yapıştırın</label><textarea className="input min-h-[200px] font-mono text-xs resize-y" placeholder={"Tarih\tİşlem\tTutar\n15.05.2025\tMigros\t-342,50 TL"} value={textContent} onChange={(e) => setTextContent(e.target.value)} /></div>
           )}
-          <button onClick={analyze} disabled={loading || (mode === "image" ? !imageBase64 : !textContent.trim())} className="btn-primary w-full py-3 text-base disabled:opacity-50">{loading ? <><Loader2 size={18} className="animate-spin" /> Analiz ediliyor…</> : <><Sparkles size={18} /> Ekstreyi Analiz Et</>}</button>
+
+          <button
+            onClick={analyze}
+            disabled={
+              loading ||
+              (mode === "image" ? !imageBase64 : mode === "pdf" ? !pdfBase64 : !textContent.trim())
+            }
+            className="btn-primary w-full py-3 text-base disabled:opacity-50"
+          >
+            {loading ? <><Loader2 size={18} className="animate-spin" /> Analiz ediliyor…</> : <><Sparkles size={18} /> Ekstreyi Analiz Et</>}
+          </button>
           {warning && <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800"><AlertTriangle size={16} className="mt-0.5 shrink-0" /><span>{warning}</span></div>}
           {statement && (
             <div className="space-y-4">

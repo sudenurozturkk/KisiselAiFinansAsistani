@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import StatCard from "@/components/StatCard";
@@ -35,6 +35,8 @@ import {
   BarChart3,
   Trophy,
   ArrowRight,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import InsightsRow from "@/components/Insights";
@@ -56,8 +58,12 @@ export default function DashboardPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [mirrorInsights, setMirrorInsights] = useState<EmotionalInsight[]>([]);
   const [mirrorRiskDays, setMirrorRiskDays] = useState<string[]>([]);
+  const [mirrorLoading, setMirrorLoading] = useState(false);
+  const [mirrorLoaded, setMirrorLoaded] = useState(false);
   const [alerts, setAlerts] = useState<SmartAlert[]>([]);
   const [tips, setTips] = useState<DailyTip[]>([]);
+  const [tipsLoading, setTipsLoading] = useState(false);
+  const [tipsLoaded, setTipsLoaded] = useState(false);
   const [marketPrices, setMarketPrices] = useState<Record<string, MarketPrice>>({});
 
   useEffect(() => {
@@ -65,24 +71,44 @@ export default function DashboardPage() {
       const [u, t] = await Promise.all([api.getUser(), api.getTransactions()]);
       setUser(u.user);
       setData(t);
-      // Paralel veri yükle
-      api.getEmotionalAnalysis()
-        .then((r) => {
-          setMirrorInsights(r.insights || []);
-          setMirrorRiskDays(r.riskDays || []);
-        })
-        .catch(() => {});
+      // Sadece hafif/anlık veriler otomatik yüklenir
       api.getAlerts()
         .then((r) => setAlerts(r.alerts || []))
-        .catch(() => {});
-      api.getDailyTips()
-        .then((r) => setTips(r.tips || []))
         .catch(() => {});
       api.getMarketPrices("USD,EUR,XAU,BTC,THYAO,GARAN")
         .then((r) => setMarketPrices(r.prices || {}))
         .catch(() => {});
     })();
   }, []);
+
+  async function loadMirror() {
+    if (mirrorLoading) return;
+    setMirrorLoading(true);
+    try {
+      const r = await api.getEmotionalAnalysis();
+      setMirrorInsights(r.insights || []);
+      setMirrorRiskDays(r.riskDays || []);
+      setMirrorLoaded(true);
+    } catch {
+      // sessiz hata
+    } finally {
+      setMirrorLoading(false);
+    }
+  }
+
+  async function loadTips() {
+    if (tipsLoading) return;
+    setTipsLoading(true);
+    try {
+      const r = await api.getDailyTips();
+      setTips(r.tips || []);
+      setTipsLoaded(true);
+    } catch {
+      // sessiz hata
+    } finally {
+      setTipsLoading(false);
+    }
+  }
 
   if (!data || !user)
     return (
@@ -186,7 +212,7 @@ export default function DashboardPage() {
       )}
 
       {/* Finansal Sağlık Skoru + Insights */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start">
         <HealthScoreGauge score={healthScore} />
         <div className="lg:col-span-3">
           <InsightsRow insights={insights} />
@@ -219,56 +245,71 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Finansal Ayna — Duygusal Harcama Uyarıları */}
-      {mirrorInsights.length > 0 && (
-        <div className="rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-50 to-indigo-50 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Eye size={18} className="text-purple-600" />
-            <span className="font-semibold text-purple-900 text-sm">Finansal Ayna — Davranış Analizi</span>
-            <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium ml-auto">YENİ</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            {mirrorInsights.slice(0, 3).map((insight, i) => (
-              <div
-                key={i}
-                className={`rounded-xl p-3 text-sm ${
-                  insight.type === "warning"
-                    ? "bg-amber-50 border border-amber-200"
-                    : insight.type === "positive"
-                      ? "bg-emerald-50 border border-emerald-200"
-                      : "bg-blue-50 border border-blue-200"
-                }`}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  {insight.type === "warning" ? (
-                    <ShieldAlert size={14} className="text-amber-600" />
-                  ) : insight.type === "positive" ? (
-                    <Sparkles size={14} className="text-emerald-600" />
-                  ) : (
-                    <Eye size={14} className="text-blue-600" />
-                  )}
-                  <span className="font-medium text-xs">{insight.title}</span>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed">{insight.description}</p>
-              </div>
-            ))}
-          </div>
-          {mirrorRiskDays.length > 0 && (
-            <div className="mt-3 text-xs text-purple-700 flex items-center gap-1">
-              <ShieldAlert size={12} />
-              <span>Bu hafta dikkat: <strong>{mirrorRiskDays.slice(0, 2).join(", ")}</strong> bütçe tuzağı tarihinizde görünüyor.</span>
-            </div>
-          )}
+      {/* Finansal Ayna — On-demand AI analizi */}
+      <div className="rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-50 to-indigo-50 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Eye size={18} className="text-purple-600" />
+          <span className="font-semibold text-purple-900 text-sm">Finansal Ayna — Davranış Analizi</span>
+          <span className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">AI</span>
+          <button onClick={loadMirror} disabled={mirrorLoading} className="ml-auto flex items-center gap-1.5 text-xs bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded-lg font-medium transition disabled:opacity-60">
+            {mirrorLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            {mirrorLoaded ? "Yenile" : "Analiz Et"}
+          </button>
         </div>
-      )}
-      {/* AI Günlük Tavsiyeler */}
-      {tips.length > 0 && (
-        <div className="rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-sky-50 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Sparkles size={18} className="text-cyan-600" />
-            <span className="font-semibold text-cyan-900 text-sm">AI Tavsiyeleri — Bugünü̇n İçin</span>
-            <span className="text-[10px] bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full font-medium ml-auto">AI</span>
-          </div>
+        {mirrorLoaded && mirrorInsights.length > 0 ? (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {mirrorInsights.slice(0, 3).map((insight, i) => (
+                <div
+                  key={i}
+                  className={`rounded-xl p-3 text-sm ${
+                    insight.type === "warning"
+                      ? "bg-amber-50 border border-amber-200"
+                      : insight.type === "positive"
+                        ? "bg-emerald-50 border border-emerald-200"
+                        : "bg-blue-50 border border-blue-200"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    {insight.type === "warning" ? (
+                      <ShieldAlert size={14} className="text-amber-600" />
+                    ) : insight.type === "positive" ? (
+                      <Sparkles size={14} className="text-emerald-600" />
+                    ) : (
+                      <Eye size={14} className="text-blue-600" />
+                    )}
+                    <span className="font-medium text-xs">{insight.title}</span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">{insight.description}</p>
+                </div>
+              ))}
+            </div>
+            {mirrorRiskDays.length > 0 && (
+              <div className="mt-3 text-xs text-purple-700 flex items-center gap-1">
+                <ShieldAlert size={12} />
+                <span>Bu hafta dikkat: <strong>{mirrorRiskDays.slice(0, 2).join(", ")}</strong></span>
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-purple-700/70 leading-relaxed">
+            {mirrorLoaded ? "Analiz için yeterli veri bulunamadı." : "Harcama alışkanlıklarınızı ve risk günlerinizi analiz etmek için butona tıklayın."}
+          </p>
+        )}
+      </div>
+
+      {/* AI Günlük Tavsiyeler — On-demand */}
+      <div className="rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-sky-50 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Sparkles size={18} className="text-cyan-600" />
+          <span className="font-semibold text-cyan-900 text-sm">AI Günlük Tavsiyeleri</span>
+          <span className="text-[10px] bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full font-medium">AI</span>
+          <button onClick={loadTips} disabled={tipsLoading} className="ml-auto flex items-center gap-1.5 text-xs bg-cyan-100 hover:bg-cyan-200 text-cyan-700 px-3 py-1.5 rounded-lg font-medium transition disabled:opacity-60">
+            {tipsLoading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            {tipsLoaded ? "Yenile" : "Tavsiyeleri Getir"}
+          </button>
+        </div>
+        {tipsLoaded && tips.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {tips.map((tip) => (
               <div key={tip.id} className="rounded-xl bg-white/70 border border-cyan-100 p-3 flex gap-3 items-start hover:shadow-sm transition-shadow">
@@ -280,25 +321,32 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-xs text-cyan-700/70 leading-relaxed">
+            {tipsLoaded ? "Tavsiye alınamadı. Tekrar deneyin." : "Finansal durumunuza özel günlük tavsiyeler almak için butona tıklayın."}
+          </p>
+        )}
+      </div>
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Bu ay gelir"
           value={formatTRY(s.thisMonth.income)}
+          hint={`Geçen ay: ${formatTRY(s.lastMonth?.income ?? 0)}`}
           tone="good"
           icon={<ArrowUpRight size={18} />}
         />
         <StatCard
           label="Bu ay gider"
           value={formatTRY(s.thisMonth.expense)}
+          hint={`Geçen ay: ${formatTRY(s.lastMonth?.expense ?? 0)}`}
           tone="bad"
           icon={<ArrowDownRight size={18} />}
         />
         <StatCard
-          label="Net"
+          label="Net Tasarruf"
           value={formatTRY(s.thisMonth.net)}
+          hint={s.thisMonth.net >= 0 ? "Bu ay pozitif bakiye" : "Bu ay açık veriliyor"}
           tone={s.thisMonth.net >= 0 ? "good" : "bad"}
           icon={<Wallet size={18} />}
         />

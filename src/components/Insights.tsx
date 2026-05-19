@@ -24,15 +24,17 @@ export default function InsightsRow({ insights }: { insights: Insight[] }) {
       {insights.map((i) => {
         const Icon = ICON_MAP[i.id] || Star;
         return (
-          <div key={i.id} className="card !p-4">
+          <div key={i.id} className="card !p-4 flex flex-col">
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className={`w-7 h-7 rounded-lg grid place-items-center ${TONE_MAP[i.tone]}`}>
+              <span className={`w-7 h-7 rounded-lg grid place-items-center shrink-0 ${TONE_MAP[i.tone]}`}>
                 <Icon size={14} />
               </span>
-              <span className="truncate">{i.title}</span>
+              <span className="truncate leading-tight">{i.title}</span>
             </div>
-            <div className="mt-2 text-lg font-semibold">{i.value}</div>
-            {i.hint ? <div className="text-[11px] text-slate-500 mt-1 line-clamp-2">{i.hint}</div> : null}
+            <div className="mt-2 text-lg font-semibold leading-tight">{i.value}</div>
+            <div className="text-[11px] text-slate-500 mt-1 min-h-[2rem] line-clamp-2 leading-snug">
+              {i.hint ?? ""}
+            </div>
           </div>
         );
       })}

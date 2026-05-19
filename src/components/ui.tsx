@@ -102,6 +102,13 @@ export function Modal({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  // Ref ile onClose saklıyoruz — inline fonksiyon her render'da değişse bile
+  // useEffect bağımlılık listesini tetiklemez, böylece açıkken her tuş basışında
+  // re-focus olmaz (input odak kaybı sorunu çözülür).
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   // ESC + body scroll lock + focus restore
   useEffect(() => {
@@ -111,7 +118,7 @@ export function Modal({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        onCloseRef.current();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -119,7 +126,7 @@ export function Modal({
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
-    // Aç açar açmaz dialog'a fokus ver
+    // Sadece modal açıldığında (open değişince) ilk odaklanabilir öğeye fokus ver
     queueMicrotask(() => {
       const root = dialogRef.current;
       if (!root) return;
@@ -134,7 +141,7 @@ export function Modal({
       document.body.style.overflow = prevOverflow;
       previouslyFocused.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]); // `onClose` bağımlılıktan çıkarıldı — ref üzerinden çağrılıyor
 
   if (!open) return null;
   const sizeClass = {

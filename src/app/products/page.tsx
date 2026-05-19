@@ -921,17 +921,29 @@ function ProductCard({
           )}
         </div>
 
-        {/* AI yorumu */}
-        {item.aiAnalysis && !purchased && (
-          <details className="mt-1 group/det">
-            <summary className="text-[11px] text-brand-700 cursor-pointer flex items-center gap-1 hover:underline">
-              <Brain size={11} />
-              AI yorumu — aç
-            </summary>
-            <p className="text-[11px] text-slate-700 leading-relaxed mt-1 whitespace-pre-line bg-brand-50/50 rounded-lg p-2 border border-brand-100">
-              {item.aiAnalysis}
-            </p>
-          </details>
+        {/* AI yorumu — tıklayınca göster */}
+        {!purchased && (
+          item.aiAnalysis ? (
+            <details className="mt-1">
+              <summary className="text-[11px] text-brand-700 cursor-pointer flex items-center gap-1.5 w-fit rounded-lg hover:bg-brand-50 px-1.5 py-0.5 transition">
+                <Brain size={11} />
+                <span>AI Yorumu</span>
+              </summary>
+              <p className="text-[11px] text-slate-700 leading-relaxed mt-1 whitespace-pre-line bg-brand-50/50 rounded-lg p-2 border border-brand-100">
+                {item.aiAnalysis}
+              </p>
+            </details>
+          ) : (
+            <button
+              onClick={onAiAnalyze}
+              disabled={analyzing}
+              className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-brand-600 hover:bg-brand-50 px-1.5 py-0.5 rounded-lg transition w-fit"
+              title="AI ile bu ürünü analiz et"
+            >
+              {analyzing ? <Loader2 size={11} className="animate-spin" /> : <Brain size={11} />}
+              {analyzing ? "Analiz ediliyor…" : "AI Yorumu Al"}
+            </button>
+          )
         )}
 
         {/* Kullanıcı notu */}
@@ -1014,19 +1026,7 @@ function ProductCard({
                   )}
                 </button>
               )}
-              <button
-                onClick={onAiAnalyze}
-                disabled={analyzing}
-                className="p-1.5 rounded-lg hover:bg-brand-50 text-brand-600 disabled:opacity-50 transition"
-                title="AI ile kişiselleştirilmiş analiz"
-                aria-label="AI analiz et"
-              >
-                {analyzing ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Brain size={14} />
-                )}
-              </button>
+              {/* AI yorumu butonu kart içinde satır içi gösterilmektedir */}
               <button
                 onClick={onPurchase}
                 className="p-1.5 rounded-lg hover:bg-emerald-50 text-emerald-600 transition"
