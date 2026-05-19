@@ -87,16 +87,13 @@ function loadFromDisk(): MemoryDB | null {
   }
 }
 
-// Hot-reload + cold-start güvenli singleton
-const g = globalThis as unknown as {
-  __memdb?: MemoryDB;
-  __memdbLoaded?: boolean;
-};
+/* ─── Singleton (cold-start + hot-reload güvenli) ─────────── */
+
+const g = globalThis as unknown as { __memdb?: MemoryDB };
 
 if (!g.__memdb) {
   const fromDisk = loadFromDisk();
   g.__memdb = fromDisk ?? defaultDB();
-  g.__memdbLoaded = true;
   if (fromDisk) {
     console.log(
       `[store] Disk'ten yüklendi: ${fromDisk.transactions.length} işlem, ` +
@@ -109,7 +106,7 @@ if (!g.__memdb) {
 
 export const memdb: MemoryDB = g.__memdb;
 
-// Hot-reload güvenliği: eski memdb yeni alanları içermeyebilir
+// Hot-reload güvenliği: eski memdb yeni alanları içermeyebilir (geri uyumluluk)
 if (!memdb.assets) memdb.assets = [];
 if (!memdb.incomes) memdb.incomes = [];
 if (!memdb.sessions) memdb.sessions = [];
@@ -164,19 +161,16 @@ export function flushSync(): void {
   if (pendingWrites > 0) writeNow();
 }
 
-/* ─── Process Hooks ───────────────────────────────────────── */
+/* ─── Process Hooks — kapanış öncesi diske yaz ────────────── */
 
-// Process çıkış sinyallerini yakala (Ctrl+C, kill vs.) — son anda diske yaz
-if (!g.__memdbLoaded || true) {
-  // Hot-reload sırasında listener'lar birikmesin
-  const signals = ["SIGINT", "SIGTERM", "beforeExit"] as const;
-  for (const sig of signals) {
-    if (process.listenerCount(sig) === 0) {
-      process.once(sig, () => {
-        flushSync();
-        if (sig === "SIGINT" || sig === "SIGTERM") process.exit(0);
-      });
-    }
+// Hot-reload sırasında listener birikmemesi için sadece bir kez ekle
+const EXIT_SIGNALS = ["SIGINT", "SIGTERM", "beforeExit"] as const;
+for (const sig of EXIT_SIGNALS) {
+  if (process.listenerCount(sig) === 0) {
+    process.once(sig, () => {
+      flushSync();
+      if (sig === "SIGINT" || sig === "SIGTERM") process.exit(0);
+    });
   }
 }
 
