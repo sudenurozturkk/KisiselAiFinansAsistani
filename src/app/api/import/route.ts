@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserIdFromReq } from "@/lib/auth";
-import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
+import { callGemini, friendlyError } from "@/lib/gemini";
+import {
+  assertGeminiConfigured,
+  geminiErrorResponse,
+  getAiMeta,
+} from "@/lib/gemini-required";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,6 +15,7 @@ export async function POST(req: NextRequest) {
   void userId;
 
   try {
+    assertGeminiConfigured();
     const body = await req.json();
     const { csvText } = body as { csvText: string };
 
@@ -20,31 +26,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const lines = csvText.trim().split(/\r?\n/).filter((l) => l.trim());
-
-    if (!isGeminiEnabled()) {
-      // Mock fallback: basit ayrıştırma
-      const rows = lines.slice(1).map((line) => {
-        const parts = line.split(/[,;\t]/).map((s) => s.trim().replace(/^"|"$/g, ""));
-        return {
-          date: parts[0] || new Date().toISOString().slice(0, 10),
-          description: parts[1] || "Bilinmeyen",
-          amount: Math.abs(parseFloat(parts[2]?.replace(/[^\d,.-]/g, "").replace(",", ".")) || 0),
-          type: (parseFloat(parts[2]?.replace(/[^\d,.-]/g, "").replace(",", ".")) || 0) > 0 ? "gelir" as const : "gider" as const,
-          category: "Diğer" as const,
-          confidence: 0.5,
-          originalLine: line,
-        };
-      });
-      return NextResponse.json({
-        rows,
-        totalIncome: rows.filter((r) => r.type === "gelir").reduce((s, r) => s + r.amount, 0),
-        totalExpense: rows.filter((r) => r.type === "gider").reduce((s, r) => s + r.amount, 0),
-        categorySummary: [],
-      });
-    }
-
-    void lines;
     const prompt = `Aşağıdaki banka ekstresi CSV verisi Türkiye'deki bir banka müşterisine ait.
 Her satırı analiz et ve aşağıdaki JSON array formatında döndür. Sadece JSON döndür, başka metin ekleme.
 
@@ -87,13 +68,6 @@ Kurallar:
       { retries: 3, timeoutMs: 30000, label: "import-csv" },
     );
 
-    if (!result) {
-      return NextResponse.json(
-        { error: "AI servisi şu an müsait değil. Lütfen birazdan tekrar deneyin." },
-        { status: 503 },
-      );
-    }
-
     const text = result.response.text();
 
     let rows;
@@ -122,10 +96,10 @@ Kurallar:
       totalIncome: rows.filter((r: { type: string }) => r.type === "gelir").reduce((s: number, r: { amount: number }) => s + r.amount, 0),
       totalExpense: rows.filter((r: { type: string }) => r.type === "gider").reduce((s: number, r: { amount: number }) => s + r.amount, 0),
       categorySummary: [...catMap.entries()].map(([category, d]) => ({ category, ...d })),
+      ...getAiMeta(),
     });
   } catch (err: unknown) {
-    const msg = friendlyError(err);
-    console.error("[import] Hata:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error("[import] Hata:", friendlyError(err));
+    return geminiErrorResponse(err);
   }
 }

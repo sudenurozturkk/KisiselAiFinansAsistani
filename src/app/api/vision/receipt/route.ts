@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
+import { callGemini, friendlyError } from "@/lib/gemini";
 import { normalizeAmount, normalizeCategory, normalizeDate } from "@/lib/transaction-import";
+import {
+  assertGeminiConfigured,
+  geminiErrorResponse,
+  getAiMeta,
+} from "@/lib/gemini-required";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  if (!isGeminiEnabled()) {
-    return NextResponse.json(
-      { error: "Gemini API key tanımlı değil (.env.local içine GEMINI_API_KEY ekleyin)" },
-      { status: 500 },
-    );
-  }
-
   try {
+    assertGeminiConfigured();
     const body = await req.json();
     const { image, mimeType } = body as {
       image: string; // base64
@@ -87,12 +86,6 @@ DOĞRULUK KURALLARI:
       { retries: 3, timeoutMs: 20000, label: "vision-receipt" },
     );
 
-    if (!result) {
-      return NextResponse.json(
-        { error: "AI servisi şu an müsait değil. Lütfen birazdan tekrar deneyin." },
-        { status: 503 },
-      );
-    }
     const text = result.response.text();
 
     let parsed;
@@ -134,13 +127,13 @@ DOĞRULUK KURALLARI:
       return NextResponse.json({
         receipt,
         warning: "Fiş düşük güvenle okundu. Lütfen verileri kontrol edin.",
+        ...getAiMeta(),
       });
     }
 
-    return NextResponse.json({ receipt });
+    return NextResponse.json({ receipt, ...getAiMeta() });
   } catch (err: unknown) {
-    const msg = friendlyError(err);
-    console.error("[vision/receipt] Hata:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error("[vision/receipt] Hata:", friendlyError(err));
+    return geminiErrorResponse(err);
   }
 }

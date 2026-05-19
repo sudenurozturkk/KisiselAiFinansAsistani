@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import Markdown from "@/components/Markdown";
+import { AiPoweredBadge } from "@/components/AiPoweredBadge";
 import { useToast } from "@/components/Toast";
 import { ConfirmDialog } from "@/components/ui";
 import type { ChatMessage, AgentStep, ChatSession } from "@/lib/types";
@@ -237,12 +238,13 @@ export default function ChatPage() {
     <div className="space-y-4 h-[calc(100vh-6rem)] flex flex-col">
       <header className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
+          <h1 className="text-2xl font-semibold flex items-center gap-2 flex-wrap">
             <Sparkles className="text-brand-600" size={22} />
             AI Finans Asistanı
+            <AiPoweredBadge />
           </h1>
           <p className="text-slate-500 text-sm mt-0.5">
-            Agentic AI — Bütçen, harcamaların ve hedeflerine göre kişiselleştirilmiş analiz.
+            Google Gemini — gerçek AI yanıtları; kural tabanlı veya sahte önizleme yok.
           </p>
         </div>
         <div className="flex items-center gap-2">

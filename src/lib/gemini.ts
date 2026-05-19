@@ -1,10 +1,16 @@
 /**
  * Gemini AI entegrasyonu — Agentic yapı desteğiyle.
  *
- * Tek ortam değişkeni: GEMINI_API_KEY (.env.local)
- * API yoksa mock fallback yanıtlar (UI tamamen çalışır).
+ * Zorunlu: GEMINI_API_KEY (.env.local)
+ * Sahte/mock yanıt üretilmez; key yoksa veya API hata verirse istisna fırlatılır.
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  assertGeminiConfigured,
+  GeminiApiError,
+  getAiMeta,
+  isGeminiConfigured,
+} from "@/lib/gemini-required";
 import type {
   AgentStep,
   ChatMessage,
@@ -26,10 +32,12 @@ function getModelName() {
   return process.env.GEMINI_MODEL || "gemini-2.5-flash";
 }
 
-/** Gemini API etkin mi? */
+/** Gemini API etkin mi? (GEMINI_API_KEY tanımlı mı) */
 export function isGeminiEnabled(): boolean {
-  return getApiKey().length > 0;
+  return isGeminiConfigured();
 }
+
+export { getAiMeta };
 
 function getClient(): GoogleGenerativeAI | null {
   const key = getApiKey();
@@ -138,7 +146,7 @@ export async function withRetry<T>(
 
 /**
  * Gemini çağrısı — tek API key, 429/5xx/timeout için retry.
- * Key yoksa null (caller mock fallback).
+ * Key yoksa veya kalıcı hata varsa istisna fırlatır (mock yok).
  */
 export async function callGemini<T>(
   task: (
@@ -146,9 +154,12 @@ export async function callGemini<T>(
     modelName: string,
   ) => Promise<T>,
   options: { retries?: number; timeoutMs?: number; label?: string } = {},
-): Promise<T | null> {
+): Promise<T> {
+  assertGeminiConfigured();
   const client = getClient();
-  if (!client) return null;
+  if (!client) {
+    throw new GeminiApiError("Gemini istemcisi oluşturulamadı.");
+  }
 
   const modelName = getModelName();
   const label = options.label ?? "gemini";
@@ -160,8 +171,9 @@ export async function callGemini<T>(
       options.timeoutMs ?? 30000,
     );
   } catch (err) {
-    console.error(`[${label}]`, err instanceof Error ? err.message : err);
-    return null;
+    const msg = friendlyError(err);
+    console.error(`[${label}]`, msg);
+    throw new GeminiApiError(msg, err);
   }
 }
 
@@ -240,10 +252,7 @@ export async function generateChatReply(
   history: ChatMessage[],
   userMessage: string,
 ): Promise<{ reply: string; steps: AgentStep[] }> {
-  if (!isGeminiEnabled()) {
-    const reply = mockReply(user, txs, userMessage);
-    return { reply, steps: [{ type: "response", content: reply }] };
-  }
+  assertGeminiConfigured();
 
   const systemPrompt = buildSystemPrompt(user, txs);
   const historyForAgent = history.slice(-10).map((m) => ({
@@ -266,15 +275,10 @@ export async function generateChatReply(
       { retries: 3, timeoutMs: 35000, label: "gemini-agent" },
     );
 
-    if (!result) {
-      const reply = mockReply(user, txs, userMessage);
-      return { reply, steps: [{ type: "response", content: reply }] };
-    }
     return result;
   } catch (err: unknown) {
-    const errMsg = friendlyError(err);
-    console.error("[gemini-agent] HATA:", errMsg);
-    return { reply: errMsg, steps: [{ type: "response", content: errMsg }] };
+    if (err instanceof GeminiApiError) throw err;
+    throw new GeminiApiError(friendlyError(err), err);
   }
 }
 
@@ -339,19 +343,9 @@ ${anomalies.length > 0 ? anomalies.map((a) => `- ${a.category}: ${a.message} (z-
   }
 ]`;
 
-  if (!isGeminiEnabled()) {
-    return {
-      text: mockReply(user, txs, prompt),
-      structured: mockStructuredRecommendations(user, txs),
-    };
-  }
+  assertGeminiConfigured();
 
   try {
-    console.log(
-      "[gemini] Recommendations: gerçek Gemini API kullanılıyor, model:",
-      getModelName(),
-    );
-
     const res = await callGemini(
       (client, modelName) => {
         const model = client.getGenerativeModel({
@@ -364,12 +358,6 @@ ${anomalies.length > 0 ? anomalies.map((a) => `- ${a.category}: ${a.message} (z-
       { retries: 3, timeoutMs: 35000, label: "gemini-recommendations" },
     );
 
-    if (!res) {
-      return {
-        text: mockReply(user, txs, prompt),
-        structured: mockStructuredRecommendations(user, txs),
-      };
-    }
     const responseText = res.response.text();
     console.log(
       "[gemini] Recommendations raw response length:",
@@ -413,13 +401,16 @@ ${anomalies.length > 0 ? anomalies.map((a) => `- ${a.category}: ${a.message} (z-
         const jsonMatch = responseText.match(/\[[\s\S]*\]/);
         if (jsonMatch) structured = JSON.parse(jsonMatch[0]);
       } catch {
-        structured = mockStructuredRecommendations(user, txs);
+        throw new GeminiApiError(
+          "Öneri yanıtı JSON olarak ayrıştırılamadı. Lütfen tekrar deneyin.",
+        );
       }
     }
 
     if (structured.length === 0) {
-      console.warn("[gemini] Recommendations boş döndü, mock kullanılıyor");
-      structured = mockStructuredRecommendations(user, txs);
+      throw new GeminiApiError(
+        "Gemini geçerli öneri listesi döndürmedi. Lütfen tekrar deneyin.",
+      );
     }
 
     const textVersion = structured
@@ -431,14 +422,8 @@ ${anomalies.length > 0 ? anomalies.map((a) => `- ${a.category}: ${a.message} (z-
 
     return { text: textVersion || responseText, structured };
   } catch (err: unknown) {
-    const rawMsg = err instanceof Error ? err.message : String(err);
-    const errMsg = friendlyError(err);
-    console.error("[gemini] Recommendations HATA raw:", rawMsg.slice(0, 300));
-    console.error("[gemini] Recommendations HATA:", errMsg);
-    return {
-      text: errMsg,
-      structured: mockStructuredRecommendations(user, txs),
-    };
+    if (err instanceof GeminiApiError) throw err;
+    throw new GeminiApiError(friendlyError(err), err);
   }
 }
 
@@ -448,9 +433,7 @@ export async function generateQuiz(
   topic: string,
   difficulty: string,
 ): Promise<string> {
-  if (!isGeminiEnabled()) {
-    return JSON.stringify(mockQuiz(topic));
-  }
+  assertGeminiConfigured();
 
   const prompt = `"${topic}" konusunda "${difficulty}" seviyesinde bir Türkçe finansal okuryazarlık quiz sorusu üret.
 Türkiye ekonomisi bağlamında somut örnekler kullan.
@@ -476,30 +459,17 @@ JSON formatında döndür (sadece JSON, başka bir şey ekleme):
       },
       { retries: 3, timeoutMs: 25000, label: "gemini-quiz" },
     );
-    if (!res) return JSON.stringify(mockQuiz(topic));
     return res.response.text();
   } catch (err: unknown) {
-    console.error("[gemini] Quiz HATA:", err);
-    return JSON.stringify(mockQuiz(topic));
+    if (err instanceof GeminiApiError) throw err;
+    throw new GeminiApiError(friendlyError(err), err);
   }
 }
 
 export async function generateScenarioAnalysis(
   scenario: string,
 ): Promise<string> {
-  const fallback = JSON.stringify({
-    scenario,
-    analysis: "Bu senaryo detaylı bir finansal değerlendirme gerektirir.",
-    risks: ["Faiz maliyeti artabilir", "Nakit akışı darlaşabilir"],
-    recommendations: [
-      "Asgari ödemeyle yetinmek yerine mümkün olduğunca fazla ödeme yap",
-      "Kart borcu yoksa kredi kartını sadece nakit akışı aracı olarak kullan",
-    ],
-    financialImpact:
-      "Asgari ödeme yapıldığında kalan borç üzerine aylık ~%3-4 faiz uygulanır.",
-  });
-
-  if (!isGeminiEnabled()) return fallback;
+  assertGeminiConfigured();
 
   const prompt = `Aşağıdaki finansal senaryoyu Türkiye ekonomisi bağlamında analiz et:
 "${scenario}"
@@ -524,17 +494,10 @@ JSON formatında döndür (sadece JSON):
       },
       { retries: 3, timeoutMs: 25000, label: "gemini-scenario" },
     );
-    if (!res) return fallback;
     return res.response.text();
   } catch (err: unknown) {
-    console.error("[gemini] Scenario HATA:", err);
-    return JSON.stringify({
-      scenario,
-      analysis: `Analiz şu an yapılamadı: ${friendlyError(err)}`,
-      risks: [],
-      recommendations: [],
-      financialImpact: "",
-    });
+    if (err instanceof GeminiApiError) throw err;
+    throw new GeminiApiError(friendlyError(err), err);
   }
 }
 
@@ -542,9 +505,7 @@ export async function explainConcept(
   concept: string,
   level: string,
 ): Promise<string> {
-  if (!isGeminiEnabled()) {
-    return `**${concept}** kavramı hakkında bilgi:\n\nBu kavram finansal okuryazarlığın temel taşlarından biridir. (Mock yanıt — GEMINI_API_KEY eklenince gerçek açıklama üretilir.)`;
-  }
+  assertGeminiConfigured();
 
   const prompt = `"${concept}" kavramını "${level}" seviyesinde, Türkçe olarak açıkla.
 Türkiye ekonomisinden somut örnekler ver.
@@ -559,13 +520,10 @@ Güncel veriler ve gerçekçi senaryolar kullan.`;
       },
       { retries: 3, timeoutMs: 25000, label: "gemini-explain" },
     );
-    if (!res) {
-      return `**${concept}** kavramı hakkında bilgi üretilemedi (AI servisi şu an müsait değil). Birazdan tekrar deneyin.`;
-    }
     return res.response.text();
   } catch (err: unknown) {
-    console.error("[gemini] Explain HATA:", err);
-    return `**${concept}** kavramı hakkında bilgi şu an üretilemedi: ${friendlyError(err)}`;
+    if (err instanceof GeminiApiError) throw err;
+    throw new GeminiApiError(friendlyError(err), err);
   }
 }
 
@@ -605,9 +563,7 @@ export async function analyzeProduct(
   const monthlyNet = s.thisMonth.net;
   const remainingBudget = Math.max(0, user.monthlyBudget - s.thisMonth.expense);
 
-  if (!isGeminiEnabled()) {
-    return mockProductAnalysis(product, user, monthlyNet, remainingBudget);
-  }
+  assertGeminiConfigured();
 
   const prompt = `Sen bir kişisel finans danışmanısın. Bir kullanıcının istek listesindeki ürünü, finansal durumuna göre analiz edeceksin.
 
@@ -658,9 +614,6 @@ Sadece geçerli JSON döndür, açıklama ekleme. ŞEMA:
       },
       { retries: 3, timeoutMs: 25000, label: "gemini-product" },
     );
-    if (!res) {
-      return mockProductAnalysis(product, user, monthlyNet, remainingBudget);
-    }
     const text = res.response.text();
     const parsed = JSON.parse(text);
     return {
@@ -686,63 +639,9 @@ Sadece geçerli JSON döndür, açıklama ekleme. ŞEMA:
       affordabilityNote: String(parsed.affordabilityNote || "").slice(0, 250),
     };
   } catch (err) {
-    console.error("[gemini] analyzeProduct HATA:", err);
-    return mockProductAnalysis(product, user, monthlyNet, remainingBudget);
+    if (err instanceof GeminiApiError) throw err;
+    throw new GeminiApiError(friendlyError(err), err);
   }
-}
-
-function mockProductAnalysis(
-  product: {
-    name: string;
-    price?: number;
-    urgency?: string;
-    category?: string;
-  },
-  user: UserProfile,
-  monthlyNet: number,
-  remainingBudget: number,
-): ProductAnalysisResult {
-  const price = product.price ?? 0;
-  const isExpensive = price > user.monthlyIncome * 0.2;
-  const fitsBudget = price > 0 && price <= remainingBudget;
-  const isUrgent = product.urgency === "acil" || product.urgency === "ihtiyaç";
-
-  let verdict: ProductAnalysisResult["verdict"] = "wait";
-  if (isUrgent && fitsBudget) verdict = "buy_now";
-  else if (isExpensive && monthlyNet < user.savingsGoal / 2) verdict = "wait";
-  else if (price > monthlyNet * 2) verdict = "find_alternative";
-  else if (!isUrgent && product.urgency === "hobi" && isExpensive)
-    verdict = "skip";
-
-  const summary =
-    verdict === "buy_now"
-      ? `${user.name}, "${product.name}" senin için uygun bir alım. Aciliyet yüksek ve bütçen el veriyor.`
-      : verdict === "wait"
-        ? `${user.name}, "${product.name}" güzel bir seçim ama bu ay bütçen sınırlı. Önümüzdeki aya planlaman daha sağlıklı olur.`
-        : verdict === "find_alternative"
-          ? `${user.name}, "${product.name}" şu fiyata bütçeni sıkıştırır. Daha uygun fiyatlı bir alternatif araştırmanı öneririm.`
-          : `${user.name}, bu ürün hobi/lüks kategorisinde ve bütçene yüklük getirir. Tasarruf hedefini düşününce vazgeçmen daha akıllı olabilir.`;
-
-  return {
-    verdict,
-    summary,
-    pros:
-      price > 0
-        ? [
-            `Aylık gelirinin %${Math.round((price / user.monthlyIncome) * 100)}'i`,
-          ]
-        : ["Fiyat bilgisi gerekiyor"],
-    cons:
-      price > remainingBudget
-        ? [`Bu ay kalan bütçeyi (${formatTRY(remainingBudget)}) aşıyor`]
-        : [],
-    alternatives: [],
-    estimatedPrice:
-      price > 0 ? undefined : Math.round(user.monthlyIncome * 0.05),
-    affordabilityNote: fitsBudget
-      ? `Bu ay kalan bütçen (${formatTRY(remainingBudget)}) yeterli.`
-      : `Bu ay kalan bütçen ${formatTRY(remainingBudget)}. ${price > 0 ? `Ürün fiyatı (${formatTRY(price)}) bunu aşıyor.` : ""}`,
-  };
 }
 
 /* ─── Kapsamlı Finansal Rapor (Markdown) ───────────────────── */
@@ -755,12 +654,12 @@ export interface FinancialReportInput {
 
 /**
  * Kişiye özel, aylık kapsamlı finansal raporu Markdown formatında üretir.
- * Gemini varsa: AI ile zenginleştirilmiş yorum + öneri.
- * Yoksa: deterministik istatistik tabanlı rapor (her durumda yararlı).
+ * Yalnızca Gemini ile üretilir (deterministik sahte rapor yok).
  */
 export async function generateFinancialReport(
   input: FinancialReportInput,
 ): Promise<string> {
+  assertGeminiConfigured();
   const { user, txs, extraContext } = input;
   const s = summarizeFinance(txs, user.monthlyBudget);
   const anomalies = detectAnomalies(txs);
@@ -777,8 +676,6 @@ export async function generateFinancialReport(
     monthLabel,
     txCount: txs.length,
   });
-
-  if (!isGeminiEnabled()) return baseMarkdown;
 
   const prompt = `Sen kıdemli bir kişisel finans danışmanısın. Aşağıda kullanıcının ${monthLabel} ayına ait finansal verileri var. Bu verileri kullanarak Türkçe, profesyonel, **Markdown formatında** detaylı bir aylık finansal rapor üret.
 
@@ -820,16 +717,16 @@ Raporu doğrudan Markdown ile başlat (\`# ${user.name} • ${monthLabel} Finans
       },
       { retries: 3, timeoutMs: 35000, label: "gemini-report" },
     );
-    if (!res) return baseMarkdown;
     const text = res.response.text().trim();
-    if (text.length < 200) return baseMarkdown;
+    if (text.length < 200) {
+      throw new GeminiApiError(
+        "Finansal rapor yanıtı çok kısa geldi. Lütfen tekrar deneyin.",
+      );
+    }
     return text;
   } catch (err) {
-    console.warn(
-      "[gemini] generateFinancialReport fallback:",
-      friendlyError(err),
-    );
-    return baseMarkdown;
+    if (err instanceof GeminiApiError) throw err;
+    throw new GeminiApiError(friendlyError(err), err);
   }
 }
 
@@ -972,187 +869,56 @@ function computeHealthScore(
   return Math.max(0, Math.min(100, overall));
 }
 
-/* ─── Mock Fallbacks ────────────────────────────────────────── */
+/* ─── Günlük AI Tavsiyeleri ─────────────────────────────────── */
 
-function mockReply(user: UserProfile, txs: Transaction[], userMessage: string) {
-  const s = summarizeFinance(txs, user.monthlyBudget);
-  const top = s.topCategories[0]?.category || "Alışveriş";
-  return [
-    `Merhaba ${user.name}! (Mock yanıt — GEMINI_API_KEY eklenince gerçek AI modele geçer.)`,
-    ``,
-    `**Sorunla ilgili özet:** "${userMessage.slice(0, 120)}"`,
-    ``,
-    `**Bu ayki durum:** Gelir ${formatTRY(s.thisMonth.income)}, Gider ${formatTRY(s.thisMonth.expense)}, Net ${formatTRY(s.thisMonth.net)} — bütçe kullanımı %${s.thisMonth.budgetUsedPct}.`,
-    ``,
-    `**Öneriler:**`,
-    `- En yüksek harcama kategorisi **${top}**. Bu ay %15 azaltırsan ~${formatTRY(Math.round((s.topCategories[0]?.amount || 0) * 0.15))} tasarruf edersin.`,
-    `- ${formatTRY(user.savingsGoal)} tasarruf hedefin için günlük ortalama ${formatTRY(Math.round(user.savingsGoal / 30))} ayır.`,
-    `- Büyük alışverişlerde 3 taksit + nakit indirim karşılaştırması yap; toplam maliyeti gör.`,
-    `- Risk toleransın "${user.riskTolerance}" — düşük riskli mevduat/fon için aylık ${formatTRY(Math.max(500, Math.round(user.monthlyIncome * 0.1)))} ayırabilirsin (yatırım tavsiyesi değildir).`,
-  ].join("\n");
+export interface DailyTipAi {
+  id: string;
+  emoji: string;
+  title: string;
+  description: string;
+  category: "saving" | "spending" | "investing" | "behavioral" | "goal";
 }
 
-function mockStructuredRecommendations(
+export async function generateDailyTipsWithGemini(
   user: UserProfile,
   txs: Transaction[],
-): StructuredRecommendation[] {
+): Promise<DailyTipAi[]> {
+  assertGeminiConfigured();
   const s = summarizeFinance(txs, user.monthlyBudget);
-  const top3 = s.topCategories.slice(0, 3);
-  const anomalies = detectAnomalies(txs);
-  const today = new Date();
-  const budgetOver = s.thisMonth.budgetUsedPct > 100;
-  const savingsLow = s.savingsRate < 15;
-  const monthlyNet = s.thisMonth.net;
-  const results: StructuredRecommendation[] = [];
 
-  // 1. En yüksek harcama kategorisine özel
-  if (top3[0]) {
-    const cat = top3[0];
-    const pct = Math.round(
-      (cat.amount / Math.max(1, s.thisMonth.expense)) * 100,
-    );
-    const saving10 = Math.round(cat.amount * 0.1);
-    const saving20 = Math.round(cat.amount * 0.2);
-    results.push({
-      category: "tasarruf",
-      title: `${cat.category} Harcamanı ${formatTRY(saving10)} Azalt`,
-      description: `${user.name}, ${cat.category} kategorisi toplam giderinin %${pct}'ini oluşturuyor (${formatTRY(cat.amount)}). Bu kategoride %10-20 azaltma ile ayda ${formatTRY(saving10)}-${formatTRY(saving20)} tasarruf edebilirsin.`,
-      actionItems: [
-        `${cat.category} harcamana haftalık ${formatTRY(Math.round((cat.amount * 0.9) / 4))} limit koy`,
-        `Son 3 aydaki ${cat.category} harcamalarını karşılaştır`,
-        `Alternatif/daha uygun seçenekleri araştır`,
-        `Her harcama öncesi "gerçekten ihtiyacım var mı" sor`,
-      ],
-      impact: `Aylık ${formatTRY(saving10)}-${formatTRY(saving20)} tasarruf potansiyeli`,
-      priority: "high",
-    });
+  const prompt = `Sen kişisel finans koçusun. ${user.name} için bugüne özel 4 kısa Türkçe tavsiye üret.
+Gelir: ${formatTRY(user.monthlyIncome)}, bütçe: ${formatTRY(user.monthlyBudget)}, bu ay gider: ${formatTRY(s.thisMonth.expense)}, net: ${formatTRY(s.thisMonth.net)}.
+En yüksek kategori: ${s.topCategories[0]?.category ?? "—"}.
+
+Sadece JSON array döndür:
+[{"id":"tip-1","emoji":"💰","title":"...","description":"...","category":"saving|spending|investing|behavioral|goal"}]`;
+
+  const res = await callGemini(
+    (client, modelName) => {
+      const model = client.getGenerativeModel({
+        model: modelName,
+        generationConfig: { responseMimeType: "application/json" },
+      });
+      return model.generateContent(prompt);
+    },
+    { retries: 2, timeoutMs: 25000, label: "daily-tips" },
+  );
+
+  const text = res.response.text();
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new GeminiApiError("Günlük tavsiyeler üretilemedi.");
   }
-
-  // 2. Bütçe durumuna özel
-  if (budgetOver) {
-    const overAmount = s.thisMonth.expense - user.monthlyBudget;
-    results.push({
-      category: "bütçe",
-      title: `Bütçeni ${formatTRY(overAmount)} Aştın — Acil Müdahale`,
-      description: `${user.name}, bu ay bütçeni %${s.thisMonth.budgetUsedPct - 100} aştın (${formatTRY(overAmount)} fazla). Ay sonuna kadar günlük harcamanı ${formatTRY(Math.round(Math.max(0, user.monthlyBudget - s.thisMonth.expense) / Math.max(1, 30 - today.getDate())))} altına çekmelisin.`,
-      actionItems: [
-        `Kalan ${30 - new Date().getDate()} gün için günlük ${formatTRY(Math.max(0, Math.round((user.monthlyBudget - s.thisMonth.expense) / Math.max(1, 30 - new Date().getDate()))))} bütçe uygula`,
-        "Zorunlu olmayan harcamaları ay sonuna kadar durdur",
-        `${top3[0]?.category || "En yüksek kategori"} harcamalarını gözden geçir`,
-        "Otomatik bütçe uyarısı kur",
-      ],
-      impact: `${formatTRY(overAmount)} bütçe açığını kapatma`,
-      priority: "high",
-    });
-  } else {
-    const remaining = user.monthlyBudget - s.thisMonth.expense;
-    results.push({
-      category: "bütçe",
-      title: `Kalan ${formatTRY(remaining)} Bütçeni Akıllıca Kullan`,
-      description: `${user.name}, bütçenden ${formatTRY(remaining)} kaldı (%${100 - s.thisMonth.budgetUsedPct}). Bu tutarın bir kısmını tasarrufa, bir kısmını da yatırıma yönlendir.`,
-      actionItems: [
-        `${formatTRY(Math.round(remaining * 0.5))}'sini tasarruf hesabına aktar`,
-        `${formatTRY(Math.round(remaining * 0.3))}'sini yatırım için ayır`,
-        `Kalan ${formatTRY(Math.round(remaining * 0.2))}'sini esnek harcama olarak tut`,
-      ],
-      impact: `${formatTRY(Math.round(remaining * 0.5))} ek tasarruf`,
-      priority: "medium",
-    });
-  }
-
-  // 3. Yatırım — risk toleransına özel
-  const investAmount = Math.round(Math.max(0, monthlyNet) * 0.3);
-  const riskMap = {
-    düşük: { tip: "vadeli mevduat veya devlet tahvili", returnRange: "%25-35" },
-    orta: { tip: "karma yatırım fonu veya altın", returnRange: "%30-50" },
-    yüksek: { tip: "hisse senedi veya kripto", returnRange: "%40-80+" },
-  };
-  const riskInfo = riskMap[user.riskTolerance] || riskMap.orta;
-  results.push({
-    category: "yatırım",
-    title: `Aylık ${formatTRY(investAmount)} Yatırım Planı`,
-    description: `${user.name}, net gelirinin (${formatTRY(monthlyNet)}) %30'unu (${formatTRY(investAmount)}) yatırıma yönlendirebilirsin. Risk toleransın "${user.riskTolerance}" — ${riskInfo.tip} uygun olabilir. (Yatırım tavsiyesi değildir.)`,
-    actionItems: [
-      `Her ay ${formatTRY(investAmount)} otomatik yatırım talimatı ver`,
-      `${riskInfo.tip} araştır`,
-      `Acil durum fonu: ${formatTRY(s.thisMonth.expense * 3)} hedefle (3 aylık gider)`,
-      "Yatırımlarını çeşitlendir, tek enstrümana yükleme",
-    ],
-    impact: `Yıllık ${riskInfo.returnRange} potansiyel getiri`,
-    priority: monthlyNet > 0 ? "medium" : "low",
-  });
-
-  // 4. Anomali varsa ona özel, yoksa alışveriş stratejisi
-  if (anomalies.length > 0) {
-    const a = anomalies[0];
-    const excessAmount = Math.round(a.currentAmount - a.avgAmount);
-    results.push({
-      category: "alışveriş",
-      title: `${a.category} Anomalisi: ${formatTRY(excessAmount)} Fazla Harcama`,
-      description: `${user.name}, ${a.category} kategorisinde normalin üstünde harcama tespit edildi. Bu ay ${formatTRY(a.currentAmount)} harcadın, ortalaman ${formatTRY(a.avgAmount)}. ${a.message}`,
-      actionItems: [
-        `${a.category} harcamalarını tek tek gözden geçir`,
-        `Bir sonraki ay ${formatTRY(a.avgAmount)} limitine geri dön`,
-        "Büyük harcamalar için 48 saat bekleme kuralı uygula",
-        "Taksit ve abonelik kontrolü yap",
-      ],
-      impact: `Aylık ${formatTRY(excessAmount)} potansiyel tasarruf`,
-      priority: "high",
-    });
-  } else {
-    const shopCat = s.topCategories.find((c) => c.category === "Alışveriş");
-    const shopAmount = shopCat?.amount || 0;
-    results.push({
-      category: "alışveriş",
-      title:
-        shopAmount > 0
-          ? `Alışveriş Harcamanı (${formatTRY(shopAmount)}) Optimize Et`
-          : "Bilinçli Alışveriş Stratejisi",
-      description: `${user.name}, ${shopAmount > 0 ? `bu ay alışverişe ${formatTRY(shopAmount)} harcadın.` : "Alışveriş harcamalarını optimize edebilirsin."} Fiyat karşılaştırma ve zamanlama ile %15-25 tasarruf mümkün.`,
-      actionItems: [
-        `${formatTRY(Math.round(user.monthlyIncome * 0.02))} üstü alışverişlerde fiyat karşılaştır`,
-        "İndirim dönemlerini takip et (Kasım, yaz sonu)",
-        "Taksit maliyetini toplam fiyata ekleyerek değerlendir",
-        "İstek listesi oluştur, dürtüsel alımlardan kaçın",
-      ],
-      impact: `Aylık ${formatTRY(Math.round(shopAmount * 0.2 || user.monthlyIncome * 0.02))} tasarruf`,
-      priority: "low",
-    });
-  }
-
-  // 5. Tasarruf hedefi takibi
-  if (savingsLow && user.savingsGoal > 0) {
-    const gap = Math.max(0, user.savingsGoal - Math.max(0, monthlyNet));
-    results.push({
-      category: "tasarruf",
-      title: `Tasarruf Hedefine ${formatTRY(gap)} Uzaktasın`,
-      description: `${user.name}, aylık tasarruf hedefin ${formatTRY(user.savingsGoal)} ama bu ay net birikiminiz ${formatTRY(monthlyNet)}. Hedefin %${Math.round((Math.max(0, monthlyNet) / Math.max(1, user.savingsGoal)) * 100)}'ine ulaştın.`,
-      actionItems: [
-        `En yüksek 2 kategoride toplam ${formatTRY(Math.round(gap / 2))} kısıntı yap`,
-        `Gelirini artırmak için ek iş/freelance fırsatlarını değerlendir`,
-        `Otomatik tasarruf: maaş günü ${formatTRY(Math.round(user.savingsGoal * 0.5))} ayrı hesaba aktar`,
-      ],
-      impact: `Hedefe ulaşma: aylık +${formatTRY(gap)}`,
-      priority: "high",
-    });
-  }
-
-  return results.slice(0, 5);
-}
-
-function mockQuiz(topic: string) {
-  return {
-    question: `${topic} ile ilgili aşağıdakilerden hangisi doğrudur?`,
-    options: [
-      "Enflasyon paranın alım gücünü artırır",
-      "Enflasyon paranın alım gücünü azaltır",
-      "Enflasyon sadece gıda fiyatlarını etkiler",
-      "Enflasyon faiz oranlarını düşürür",
-    ],
-    correctIndex: 1,
-    explanation:
-      "Enflasyon, genel fiyat düzeyinin sürekli artması demektir. Bu durum paranın alım gücünü azaltır — yani aynı parayla daha az mal ve hizmet satın alabilirsiniz.",
-    difficulty: "kolay",
-    topic,
-  };
+  return parsed.slice(0, 5).map((t: DailyTipAi, i: number) => ({
+    id: String(t.id ?? `tip-${i + 1}`),
+    emoji: String(t.emoji ?? "💡").slice(0, 4),
+    title: String(t.title ?? "").slice(0, 120),
+    description: String(t.description ?? "").slice(0, 400),
+    category: ["saving", "spending", "investing", "behavioral", "goal"].includes(
+      t.category,
+    )
+      ? t.category
+      : "saving",
+  }));
 }

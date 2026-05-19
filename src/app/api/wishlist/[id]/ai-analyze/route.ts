@@ -7,6 +7,7 @@ import {
   getOrCreateUser,
 } from "@/lib/repo";
 import { analyzeProduct } from "@/lib/gemini";
+import { geminiErrorResponse, getAiMeta } from "@/lib/gemini-required";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,6 +22,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  try {
   const userId = getUserIdFromReq(req);
   const { id } = await params;
 
@@ -73,5 +75,8 @@ export async function POST(
       : {}),
   });
 
-  return NextResponse.json({ item: updated, analysis: result });
+  return NextResponse.json({ item: updated, analysis: result, ...getAiMeta() });
+  } catch (err) {
+    return geminiErrorResponse(err);
+  }
 }

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
+import { callGemini, friendlyError } from "@/lib/gemini";
 import { normalizeStatementPayload } from "@/lib/transaction-import";
+import {
+  assertGeminiConfigured,
+  geminiErrorResponse,
+  getAiMeta,
+} from "@/lib/gemini-required";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -8,17 +13,11 @@ export const runtime = "nodejs";
 /**
  * POST /api/vision/credit-card-statement
  *
- * Kredi kartı ekstresi (görsel veya text) yükle → AI ile satır satır oku → işlem listesi döndür.
+ * Kredi kartı ekstresi (görsel veya text) yükle → Gemini ile satır satır oku → işlem listesi döndür.
  */
 export async function POST(req: NextRequest) {
-  if (!isGeminiEnabled()) {
-    return NextResponse.json(
-      { error: "Gemini API key tanımlı değil (.env.local içine GEMINI_API_KEY ekleyin)" },
-      { status: 500 },
-    );
-  }
-
   try {
+    assertGeminiConfigured();
     const body = await req.json();
     const { image, mimeType, textContent } = body as {
       image?: string;    // base64
@@ -108,13 +107,6 @@ KURALLAR:
       { retries: 3, timeoutMs: 30000, label: "vision-cc-statement" },
     );
 
-    if (!result) {
-      return NextResponse.json(
-        { error: "AI servisi şu an müsait değil. Lütfen birazdan tekrar deneyin." },
-        { status: 503 },
-      );
-    }
-
     const text = result.response.text();
 
     let parsed;
@@ -146,10 +138,9 @@ KURALLAR:
       );
     }
 
-    return NextResponse.json({ statement });
+    return NextResponse.json({ statement, ...getAiMeta() });
   } catch (err: unknown) {
-    const msg = friendlyError(err);
-    console.error("[vision/credit-card-statement] Hata:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error("[vision/credit-card-statement] Hata:", friendlyError(err));
+    return geminiErrorResponse(err);
   }
 }

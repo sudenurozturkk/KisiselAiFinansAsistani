@@ -95,11 +95,11 @@ Tarayıcıdan `http://localhost:3000` adresine git.
 
 | Değişken | Açıklama | Zorunlu |
 |----------|----------|---------|
-| `GEMINI_API_KEY` | Google AI Studio API anahtarı | Hayır (mock fallback) |
+| `GEMINI_API_KEY` | Google AI Studio API anahtarı | **Evet (zorunlu)** |
 | `GEMINI_MODEL` | Kullanılacak model (varsayılan: `gemini-2.5-flash`) | Hayır |
 | `TWELVEDATA_API_KEY` | Piyasa fiyatları (opsiyonel) | Hayır |
 
-> **Not**: API anahtarı olmadan UI tamamen çalışır; Gemini gerektiren özellikler mock yanıt üretir.
+> **Önemli**: Tüm AI özellikleri (sohbet, öneriler, vision, simülatör, rapor vb.) yalnızca **gerçek Gemini API** ile çalışır. `GEMINI_API_KEY` yoksa bu uçlar **503** döner; sahte/mock yanıt üretilmez. API yanıtlarında `aiSource: "gemini"` ve `poweredBy: "Google Gemini"` alanları bulunur.
 
 ## 💾 Demo veri depolama (yerel)
 

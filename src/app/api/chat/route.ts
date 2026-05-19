@@ -11,6 +11,7 @@ import {
   updateChatSession,
 } from "@/lib/repo";
 import { generateChatReply } from "@/lib/gemini";
+import { geminiErrorResponse, getAiMeta } from "@/lib/gemini-required";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,6 +31,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const userId = getUserIdFromReq(req);
   const body = await req.json();
   const { content } = body as { content?: string };
@@ -76,7 +78,11 @@ export async function POST(req: NextRequest) {
     assistantMessage: assistantMsg,
     agentSteps: steps,
     sessionId,
+    ...getAiMeta(),
   });
+  } catch (err) {
+    return geminiErrorResponse(err);
+  }
 }
 
 export async function DELETE(req: NextRequest) {

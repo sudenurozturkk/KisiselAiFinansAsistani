@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserIdFromReq } from "@/lib/auth";
 import { getOrCreateUser, listTransactions, listAssets, seedAllIfEmpty } from "@/lib/repo";
 import { generateFinancialReport } from "@/lib/gemini";
+import { geminiErrorResponse, getAiMeta } from "@/lib/gemini-required";
 import { getMarketSummaryForAI } from "@/lib/market";
 import { summarizeFinance, formatTRY } from "@/lib/finance";
 import type { Asset } from "@/lib/types";
@@ -17,6 +18,7 @@ export const runtime = "nodejs";
  * format=pdf  → PDF-ready HTML
  */
 export async function GET(req: NextRequest) {
+  try {
   const userId = getUserIdFromReq(req);
   await seedAllIfEmpty(userId);
 
@@ -104,11 +106,15 @@ export async function GET(req: NextRequest) {
       generatedAt,
       user: { name: user.name },
       htmlTemplate: buildPdfHtml(markdown, user.name, generatedAt),
+      ...getAiMeta(),
     });
   }
 
   // Web (varsayılan)
-  return NextResponse.json({ format: "web", markdown, generatedAt, user });
+  return NextResponse.json({ format: "web", markdown, generatedAt, user, ...getAiMeta() });
+  } catch (err) {
+    return geminiErrorResponse(err);
+  }
 }
 
 function buildPdfHtml(markdown: string, userName: string, date: string): string {
