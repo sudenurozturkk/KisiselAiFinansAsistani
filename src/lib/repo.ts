@@ -4,9 +4,10 @@
  * Tüm CRUD işlemleri burada merkezileştirilmiştir.
  * MongoDB tamamen kaldırılmıştır; uygulama in-memory çalışır.
  */
-import { genId, memdb, nowIso } from "./store";
+import { genId, memdb, nowIso, persist } from "./store";
 import type {
   ChatMessage,
+  ChatSession,
   Transaction,
   UserProfile,
   WishlistItem,
@@ -45,6 +46,7 @@ export async function getOrCreateUser(userId: string): Promise<UserProfile> {
   if (!u) {
     u = defaultUser(userId);
     memdb.users.set(userId, u);
+    persist();
   }
   return u;
 }
@@ -56,6 +58,7 @@ export async function updateUser(
   const cur = await getOrCreateUser(userId);
   const next: UserProfile = { ...cur, ...patch, updatedAt: nowIso() };
   memdb.users.set(userId, next);
+  persist();
   return next;
 }
 
@@ -72,6 +75,7 @@ export async function addTransaction(
 ): Promise<Transaction> {
   const row: Transaction = { ...tx, _id: genId() };
   memdb.transactions.push(row);
+  persist();
   return row;
 }
 
@@ -85,6 +89,7 @@ export async function updateTransaction(
   );
   if (idx === -1) return null;
   memdb.transactions[idx] = { ...memdb.transactions[idx], ...patch };
+  persist();
   return memdb.transactions[idx];
 }
 
@@ -96,16 +101,22 @@ export async function deleteTransaction(
   memdb.transactions = memdb.transactions.filter(
     (t) => !(t._id === id && t.userId === userId),
   );
-  return memdb.transactions.length < before;
+  const changed = memdb.transactions.length < before;
+  if (changed) persist();
+  return changed;
 }
 
 export async function resetUserData(userId: string): Promise<void> {
   memdb.transactions = memdb.transactions.filter((t) => t.userId !== userId);
   memdb.messages = memdb.messages.filter((m) => m.userId !== userId);
+  memdb.sessions = memdb.sessions.filter((s) => s.userId !== userId);
   memdb.wishlist = memdb.wishlist.filter((w) => w.userId !== userId);
   memdb.subscriptions = memdb.subscriptions.filter((s) => s.userId !== userId);
   memdb.assets = memdb.assets.filter((a) => a.userId !== userId);
   memdb.incomes = memdb.incomes.filter((i) => i.userId !== userId);
+  // Reset sonrası kullanıcı tekrar seed edilebilsin
+  memdb.seededUsers.delete(userId);
+  persist();
 }
 
 /* ─── Seed Demo Data ───────────────────────────────────────── */
@@ -235,12 +246,14 @@ export async function seedTransactionsIfEmpty(userId: string) {
         note: "Otopark ücret (AVM)", date: monthAgo(today, m, 15).toISOString() },
       { userId, type: "gider", category: "Ulaşım", amount: v(45),
         note: "Köprü geçiş ücreti", date: monthAgo(today, m, 25).toISOString() },
-      // Araç bakım masrafları (birkaç ayda bir)
-      ...(m % 4 === 0 ? [{ 
-        userId, type: "gider", category: "Ulaşım", amount: 1200,
-        note: "Araç bakım + yağ değişimi", date: monthAgo(today, m, 18).toISOString() 
-      }] : []),
     );
+    // Araç bakım masrafları (birkaç ayda bir)
+    if (m % 4 === 0) {
+      samples.push({
+        userId, type: "gider", category: "Ulaşım", amount: 1200,
+        note: "Araç bakım + yağ değişimi", date: monthAgo(today, m, 18).toISOString(),
+      });
+    }
 
     // ── Abonelikler (dijital) ──
     samples.push(
@@ -291,16 +304,20 @@ export async function seedTransactionsIfEmpty(userId: string) {
         date: monthAgo(today, m, 19).toISOString() },
       { userId, type: "gider", category: "Sağlık", amount: v(150),
         note: "Diş fırçası + ağız bakım", date: monthAgo(today, m, 4).toISOString() },
-      // Doktor ziyaretleri (birkaç ayda bir)
-      ...(m % 3 === 1 ? [{ 
-        userId, type: "gider", category: "Sağlık", amount: 800,
-        note: "Doktor muayene + tahlil", date: monthAgo(today, m, 12).toISOString() 
-      }] : []),
-      ...(m % 6 === 0 ? [{ 
-        userId, type: "gider", category: "Sağlık", amount: 1500,
-        note: "Diş kontrolü + tedavi", date: monthAgo(today, m, 20).toISOString() 
-      }] : []),
     );
+    // Doktor ziyaretleri (birkaç ayda bir)
+    if (m % 3 === 1) {
+      samples.push({
+        userId, type: "gider", category: "Sağlık", amount: 800,
+        note: "Doktor muayene + tahlil", date: monthAgo(today, m, 12).toISOString(),
+      });
+    }
+    if (m % 6 === 0) {
+      samples.push({
+        userId, type: "gider", category: "Sağlık", amount: 1500,
+        note: "Diş kontrolü + tedavi", date: monthAgo(today, m, 20).toISOString(),
+      });
+    }
 
     // ── Evcil Hayvan (aylık - 2 ayda 1 veteriner) ──
     samples.push(
@@ -1703,9 +1720,16 @@ export async function seedIncomesIfEmpty(userId: string) {
 /** Concurrent seed guard — StrictMode/double-render koruması */
 const seedingLock = new Set<string>();
 
-/** Tüm demo verileri tek seferde seedle (çağrı yerlerinde rahatlık için) */
+/**
+ * Tüm demo verileri tek seferde seedle.
+ * Bu fonksiyon yalnızca yeni kullanıcılar için çalışır — bir kez seed edilen kullanıcı
+ * tüm verisini silse bile tekrar seed edilmez. Bu sayede kullanıcı kendi temiz
+ * datasını oluşturabilir.
+ */
 export async function seedAllIfEmpty(userId: string) {
-  if (seedingLock.has(userId)) return; // Zaten seed ediliyor
+  if (seedingLock.has(userId)) return;
+  // Bu kullanıcı zaten seed edilmiş — kullanıcının silme niyetine saygı duy
+  if (memdb.seededUsers.has(userId)) return;
   seedingLock.add(userId);
   try {
     await Promise.all([
@@ -1715,18 +1739,94 @@ export async function seedAllIfEmpty(userId: string) {
       seedAssetsIfEmpty(userId),
       seedIncomesIfEmpty(userId),
     ]);
+    memdb.seededUsers.add(userId);
+    persist();
   } finally {
     seedingLock.delete(userId);
   }
+}
+
+/* ─── Chat Sessions ───────────────────────────────────────── */
+
+export async function listChatSessions(userId: string): Promise<ChatSession[]> {
+  return memdb.sessions
+    .filter((s) => s.userId === userId)
+    .sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt));
+}
+
+export async function getChatSession(
+  userId: string,
+  id: string,
+): Promise<ChatSession | null> {
+  return (
+    memdb.sessions.find((s) => s._id === id && s.userId === userId) ?? null
+  );
+}
+
+export async function createChatSession(
+  userId: string,
+  title = "Yeni Sohbet",
+): Promise<ChatSession> {
+  const now = nowIso();
+  const session: ChatSession = {
+    _id: genId(),
+    userId,
+    title,
+    createdAt: now,
+    updatedAt: now,
+  };
+  memdb.sessions.push(session);
+  persist();
+  return session;
+}
+
+export async function updateChatSession(
+  userId: string,
+  id: string,
+  patch: Partial<ChatSession>,
+): Promise<ChatSession | null> {
+  const idx = memdb.sessions.findIndex(
+    (s) => s._id === id && s.userId === userId,
+  );
+  if (idx === -1) return null;
+  memdb.sessions[idx] = {
+    ...memdb.sessions[idx],
+    ...patch,
+    updatedAt: nowIso(),
+  };
+  persist();
+  return memdb.sessions[idx];
+}
+
+export async function deleteChatSession(
+  userId: string,
+  id: string,
+): Promise<boolean> {
+  const before = memdb.sessions.length;
+  memdb.sessions = memdb.sessions.filter(
+    (s) => !(s._id === id && s.userId === userId),
+  );
+  // İlgili mesajları da sil
+  memdb.messages = memdb.messages.filter(
+    (m) => !(m.sessionId === id && m.userId === userId),
+  );
+  const changed = memdb.sessions.length < before;
+  if (changed) persist();
+  return changed;
 }
 
 /* ─── Chat Messages ────────────────────────────────────────── */
 
 export async function listMessages(
   userId: string,
-  limit = 100,
+  limit = 200,
+  sessionId?: string,
 ): Promise<ChatMessage[]> {
-  return memdb.messages.filter((m) => m.userId === userId).slice(-limit);
+  let msgs = memdb.messages.filter((m) => m.userId === userId);
+  if (sessionId) {
+    msgs = msgs.filter((m) => m.sessionId === sessionId);
+  }
+  return msgs.slice(-limit);
 }
 
 export async function addMessage(
@@ -1734,11 +1834,27 @@ export async function addMessage(
 ): Promise<ChatMessage> {
   const row: ChatMessage = { ...msg, _id: genId(), createdAt: nowIso() };
   memdb.messages.push(row);
+  // Session updatedAt'i güncelle
+  if (msg.sessionId) {
+    const idx = memdb.sessions.findIndex((s) => s._id === msg.sessionId);
+    if (idx !== -1) memdb.sessions[idx].updatedAt = nowIso();
+  }
+  persist();
   return row;
 }
 
-export async function clearMessages(userId: string): Promise<void> {
-  memdb.messages = memdb.messages.filter((m) => m.userId !== userId);
+export async function clearMessages(
+  userId: string,
+  sessionId?: string,
+): Promise<void> {
+  if (sessionId) {
+    memdb.messages = memdb.messages.filter(
+      (m) => !(m.userId === userId && m.sessionId === sessionId),
+    );
+  } else {
+    memdb.messages = memdb.messages.filter((m) => m.userId !== userId);
+  }
+  persist();
 }
 
 /* ─── Wishlist ─────────────────────────────────────────────── */
@@ -1760,6 +1876,7 @@ export async function addWishlistItem(
 ): Promise<WishlistItem> {
   const row: WishlistItem = { ...item, _id: genId(), createdAt: nowIso() };
   memdb.wishlist.push(row);
+  persist();
   return row;
 }
 
@@ -1773,6 +1890,7 @@ export async function updateWishlistItem(
   );
   if (idx === -1) return null;
   memdb.wishlist[idx] = { ...memdb.wishlist[idx], ...patch };
+  persist();
   return memdb.wishlist[idx];
 }
 
@@ -1784,7 +1902,9 @@ export async function deleteWishlistItem(
   memdb.wishlist = memdb.wishlist.filter(
     (w) => !(w._id === id && w.userId === userId),
   );
-  return memdb.wishlist.length < before;
+  const changed = memdb.wishlist.length < before;
+  if (changed) persist();
+  return changed;
 }
 
 /* ─── Subscriptions ────────────────────────────────────────── */
@@ -1800,6 +1920,7 @@ export async function addSubscription(
 ): Promise<Subscription> {
   const sub: Subscription = { ...data, _id: genId(), createdAt: nowIso() };
   memdb.subscriptions.push(sub);
+  persist();
   return sub;
 }
 
@@ -1813,6 +1934,7 @@ export async function updateSubscription(
   );
   if (idx === -1) return null;
   memdb.subscriptions[idx] = { ...memdb.subscriptions[idx], ...patch };
+  persist();
   return memdb.subscriptions[idx];
 }
 
@@ -1824,7 +1946,9 @@ export async function deleteSubscription(
   memdb.subscriptions = memdb.subscriptions.filter(
     (s) => !(s._id === id && s.userId === userId),
   );
-  return memdb.subscriptions.length < before;
+  const changed = memdb.subscriptions.length < before;
+  if (changed) persist();
+  return changed;
 }
 
 /* ─── Assets (Varlıklar) ───────────────────────────────────── */
@@ -1840,6 +1964,7 @@ export async function addAsset(
 ): Promise<Asset> {
   const row: Asset = { ...data, _id: genId() };
   memdb.assets.push(row);
+  persist();
   return row;
 }
 
@@ -1853,11 +1978,11 @@ export async function updateAsset(
   );
   if (idx === -1) return null;
   const updated = { ...memdb.assets[idx], ...patch, updatedAt: nowIso() };
-  // Otomatik olarak currentValue hesapla
   if (updated.quantity != null && updated.currentPrice != null) {
     updated.currentValue = updated.quantity * updated.currentPrice;
   }
   memdb.assets[idx] = updated;
+  persist();
   return updated;
 }
 
@@ -1869,7 +1994,9 @@ export async function deleteAsset(
   memdb.assets = memdb.assets.filter(
     (a) => !(a._id === id && a.userId === userId),
   );
-  return memdb.assets.length < before;
+  const changed = memdb.assets.length < before;
+  if (changed) persist();
+  return changed;
 }
 
 /* ─── Income Sources (Ek Gelirler) ─────────────────────────── */
@@ -1883,6 +2010,7 @@ export async function addIncome(
 ): Promise<IncomeSource> {
   const row: IncomeSource = { ...data, _id: genId(), createdAt: nowIso() };
   memdb.incomes.push(row);
+  persist();
   return row;
 }
 
@@ -1896,6 +2024,7 @@ export async function updateIncome(
   );
   if (idx === -1) return null;
   memdb.incomes[idx] = { ...memdb.incomes[idx], ...patch };
+  persist();
   return memdb.incomes[idx];
 }
 
@@ -1907,5 +2036,7 @@ export async function deleteIncome(
   memdb.incomes = memdb.incomes.filter(
     (i) => !(i._id === id && i.userId === userId),
   );
-  return memdb.incomes.length < before;
+  const changed = memdb.incomes.length < before;
+  if (changed) persist();
+  return changed;
 }

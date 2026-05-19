@@ -24,6 +24,10 @@ tsconfig.tsbuildinfo
 build-check.txt
 nb.txt
 
+# Persistent data store (kullanıcı verileri, lokal)
+data/
+*.json.tmp
+
 # IDE
 .vscode/
 .idea/

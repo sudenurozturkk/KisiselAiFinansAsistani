@@ -47,9 +47,18 @@ export interface Transaction {
 }
 
 /* ─── Sohbet ────────────────────────────────────────────────── */
+export interface ChatSession {
+  _id: string;
+  userId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ChatMessage {
   _id?: string;
   userId: string;
+  sessionId?: string; // Hangi sohbet oturumuna ait (eski mesajlar için opsiyonel)
   role: "user" | "assistant";
   content: string;
   createdAt: string;
@@ -231,6 +240,7 @@ export interface ChatResponse {
   userMessage: ChatMessage;
   assistantMessage: ChatMessage;
   agentSteps?: AgentStep[];
+  sessionId?: string;
 }
 
 /* ─── Recommendations API Response ──────────────────────────── */
@@ -323,6 +333,7 @@ export type AssetType =
   | "kripto"
   | "gayrimenkul"
   | "fon"
+  | "mevduat"
   | "diğer";
 
 export const ASSET_TYPES: { value: AssetType; label: string; icon: string }[] =
@@ -333,6 +344,7 @@ export const ASSET_TYPES: { value: AssetType; label: string; icon: string }[] =
     { value: "kripto", label: "Kripto Para", icon: "₿" },
     { value: "gayrimenkul", label: "Gayrimenkul", icon: "🏠" },
     { value: "fon", label: "Yatırım Fonu", icon: "🏦" },
+    { value: "mevduat", label: "Mevduat / Vadeli", icon: "💰" },
     { value: "diğer", label: "Diğer", icon: "📦" },
   ];
 
@@ -372,7 +384,7 @@ export interface IncomeSource {
   name: string; // Örn: "Ev 1 Kirası", "Temettü — THYAO"
   amount: number; // Gelir miktarı (₺)
   frequency: IncomeFrequency;
-  category: "kira" | "temettü" | "serbest" | "ek_iş" | "diğer";
+  category: "kira" | "temettü" | "serbest" | "ek_iş" | "faiz" | "diğer";
   active: boolean;
   note?: string;
   createdAt: string;
@@ -384,6 +396,7 @@ export const INCOME_CATEGORIES: {
 }[] = [
   { value: "kira", label: "Kira Geliri" },
   { value: "temettü", label: "Temettü / Kâr Payı" },
+  { value: "faiz", label: "Faiz Geliri" },
   { value: "serbest", label: "Serbest Meslek" },
   { value: "ek_iş", label: "Ek İş / Freelance" },
   { value: "diğer", label: "Diğer" },

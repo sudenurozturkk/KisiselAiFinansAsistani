@@ -119,14 +119,44 @@ export const api = {
       analysis: import("./gemini").ProductAnalysisResult;
     }>(`/api/wishlist/${id}/ai-analyze`, { method: "POST" }),
 
-  // Sohbet (Agentic AI)
-  getMessages: () => call<{ messages: ChatMessage[] }>("/api/chat"),
-  sendMessage: (content: string) =>
-    call<ChatResponse>("/api/chat", {
+  // Sohbet (Agentic AI) — Çoklu oturum (session) destekli
+  getMessages: (sessionId?: string) =>
+    call<{ messages: ChatMessage[] }>(
+      sessionId ? `/api/chat?sessionId=${sessionId}` : "/api/chat",
+    ),
+  sendMessage: (content: string, sessionId?: string) =>
+    call<ChatResponse & { sessionId: string }>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, sessionId }),
     }),
-  clearMessages: () => call<{ ok: boolean }>("/api/chat", { method: "DELETE" }),
+  clearMessages: (sessionId?: string) =>
+    call<{ ok: boolean }>(
+      sessionId ? `/api/chat?sessionId=${sessionId}` : "/api/chat",
+      { method: "DELETE" },
+    ),
+  // Sohbet oturumları (Yeni sohbet / liste)
+  listChatSessions: () =>
+    call<{ sessions: import("./types").ChatSession[] }>("/api/chat/sessions"),
+  createChatSession: (title?: string) =>
+    call<{ session: import("./types").ChatSession }>("/api/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ title }),
+    }),
+  getChatSession: (id: string) =>
+    call<{
+      session: import("./types").ChatSession;
+      messages: ChatMessage[];
+    }>(`/api/chat/sessions/${id}`),
+  updateChatSession: (id: string, title: string) =>
+    call<{ session: import("./types").ChatSession }>(
+      `/api/chat/sessions/${id}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      },
+    ),
+  deleteChatSession: (id: string) =>
+    call<{ ok: boolean }>(`/api/chat/sessions/${id}`, { method: "DELETE" }),
 
   // Öneriler
   getRecommendations: (forceRefresh = false) =>

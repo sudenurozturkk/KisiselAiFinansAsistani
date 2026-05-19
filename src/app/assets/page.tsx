@@ -39,6 +39,7 @@ const ASSET_ICONS: Record<AssetType, typeof Coins> = {
   kripto: Landmark,
   gayrimenkul: Building2,
   fon: PiggyBank,
+  mevduat: Landmark,
   diğer: Wallet,
 };
 
