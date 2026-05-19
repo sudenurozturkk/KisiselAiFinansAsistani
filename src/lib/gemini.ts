@@ -40,21 +40,26 @@ function collectApiKeys(): string[] {
 /** Round-robin sayacı (sunucu ömrü boyunca). */
 let keyIndex = 0;
 
-/** Cooldown takibi — 429 alan key'ler geçici olarak devre dışı. */
+/** Cooldown takibi — 429/5xx alan key'ler geçici olarak devre dışı. */
 const keyCooldowns = new Map<string, number>(); // key → Date.now() + ms
 
-/** Bir sonraki kullanılabilir key'i al (round-robin + cooldown). */
+/**
+ * Kalıcı olarak devre dışı bırakılmış (geçersiz / yetkisiz) key'ler.
+ * 401/403 alan key'ler buraya eklenir ve süreç boyunca bir daha denenmez.
+ */
+const deadKeys = new Set<string>();
+
+/** Bir sonraki kullanılabilir key'i al (round-robin + cooldown + dead filtreli). */
 function getNextApiKey(): string {
-  const keys = collectApiKeys();
+  const allKeys = collectApiKeys();
+  const keys = allKeys.filter((k) => !deadKeys.has(k));
   if (keys.length === 0) return "";
 
   const now = Date.now();
-  // Cooldown'u bitmiş key'leri temizle
   for (const [k, until] of keyCooldowns) {
     if (until <= now) keyCooldowns.delete(k);
   }
 
-  // Round-robin ile cooldown'da olmayan ilk key'i bul
   for (let attempt = 0; attempt < keys.length; attempt++) {
     const idx = (keyIndex + attempt) % keys.length;
     const key = keys[idx]!;
@@ -65,7 +70,6 @@ function getNextApiKey(): string {
     }
   }
 
-  // Hepsi cooldown'da — en kısa sürede açılacak olanı kullan
   let bestKey = keys[0]!;
   let bestTime = Infinity;
   for (const key of keys) {
@@ -78,13 +82,26 @@ function getNextApiKey(): string {
   return bestKey;
 }
 
-/** 429 alan key'i geçici olarak devre dışı bırak (varsayılan 15s). */
+/** 429/5xx alan key'i geçici olarak devre dışı bırak. */
 function markKeyRateLimited(key: string, cooldownMs = 15_000) {
   keyCooldowns.set(key, Date.now() + cooldownMs);
-  const keyCount = collectApiKeys().length;
+  const totalCount = collectApiKeys().length;
+  const aliveCount = totalCount - deadKeys.size;
   console.warn(
-    `[gemini] Key ...${key.slice(-6)} rate limited, ${cooldownMs / 1000}s cooldown. ` +
-    `(${keyCount} key havuzunda)`,
+    `[gemini] Key ...${key.slice(-6)} cooldown ${cooldownMs / 1000}s. ` +
+      `(canlı ${aliveCount}/${totalCount})`,
+  );
+}
+
+/** 401/403 alan key'i kalıcı olarak devre dışı bırak. */
+function markKeyDead(key: string, reason: string) {
+  if (deadKeys.has(key)) return;
+  deadKeys.add(key);
+  const totalCount = collectApiKeys().length;
+  const aliveCount = totalCount - deadKeys.size;
+  console.error(
+    `[gemini] Key ...${key.slice(-6)} KALICI olarak devre dışı (${reason}). ` +
+      `(canlı ${aliveCount}/${totalCount})`,
   );
 }
 
@@ -104,12 +121,21 @@ function getClient(): GoogleGenerativeAI | null {
   return key ? new GoogleGenerativeAI(key) : null;
 }
 
-/** Mevcut aktif key sayısını logla (debug). */
+/** Mevcut key havuzu durumu (debug / monitoring). */
 export function getKeyPoolStatus() {
   const keys = collectApiKeys();
   const now = Date.now();
-  const active = keys.filter((k) => (keyCooldowns.get(k) ?? 0) <= now).length;
-  return { total: keys.length, active, cooldown: keys.length - active };
+  const dead = keys.filter((k) => deadKeys.has(k)).length;
+  const alive = keys.filter((k) => !deadKeys.has(k));
+  const active = alive.filter((k) => (keyCooldowns.get(k) ?? 0) <= now).length;
+  const cooldown = alive.length - active;
+  return {
+    total: keys.length,
+    alive: alive.length,
+    active,
+    cooldown,
+    dead,
+  };
 }
 
 /** Verilen ms süresinde tamamlanmayan çağrıyı reddeder. */
@@ -136,33 +162,62 @@ export function withTimeout<T>(
   });
 }
 
-/** Rate-limit aware retry wrapper + per-attempt timeout + key rotation. */
+/**
+ * Rate-limit / sunucu hatası bilinçli retry wrapper.
+ *
+ * Yakalanan hatalar:
+ *  - 429 (rate limit / quota): aktif key'i cooldown'a alır, key rotasyonu
+ *  - 503 / 500 / 502 / 504 (sunucu tarafı): exponential backoff ile yeniden dener
+ *  - timeout: kısa bekleme + yeniden deneme
+ *
+ * Varsayılan: 3 retry (toplam 4 deneme), per-attempt 30s timeout.
+ */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  retries = 1,
-  perAttemptTimeoutMs = 30000, // gemini-2.5-flash thinking modeli için 30s
+  retries = 3,
+  perAttemptTimeoutMs = 30000,
 ): Promise<T> {
+  let lastError: unknown;
   for (let i = 0; i <= retries; i++) {
     try {
       return await withTimeout(fn(), perAttemptTimeoutMs, "gemini");
     } catch (err: unknown) {
+      lastError = err;
       const msg = err instanceof Error ? err.message : String(err);
+
       const is429 =
         msg.includes("429") ||
         msg.includes("quota") ||
         msg.includes("Too Many Requests");
+      const is5xx =
+        msg.includes("503") ||
+        msg.includes("500") ||
+        msg.includes("502") ||
+        msg.includes("504") ||
+        msg.includes("Service Unavailable") ||
+        msg.includes("Internal Server Error") ||
+        msg.includes("Bad Gateway") ||
+        msg.includes("Gateway Timeout") ||
+        msg.includes("high demand") ||
+        msg.includes("overloaded");
       const isTimeout = msg.includes("timeout");
+      const isRetryable = is429 || is5xx || isTimeout;
 
-      // 429 ise aktif key'i cooldown'a al — sonraki deneme farklı key kullanır
       if (is429) {
         const currentKey = getNextApiKey();
         if (currentKey) markKeyRateLimited(currentKey);
       }
 
-      if ((is429 || isTimeout) && i < retries) {
-        const waitMs = is429 ? 3000 : 500; // Key rotasyonu sayesinde daha kısa bekleme
+      if (isRetryable && i < retries) {
+        const base = is429 ? 1500 : is5xx ? 1000 : 400;
+        const waitMs = Math.min(base * Math.pow(2, i), 8000);
+        const reason = is429
+          ? "Rate limit (429)"
+          : is5xx
+            ? "Sunucu hatası (5xx)"
+            : "Timeout";
         console.warn(
-          `[gemini] ${isTimeout ? "Timeout" : "Rate limit"} — ${waitMs / 1000}s bekleniyor (deneme ${i + 2}/${retries + 1})`,
+          `[gemini] ${reason} — ${waitMs / 1000}s backoff, key rotasyonu (deneme ${i + 2}/${retries + 1})`,
         );
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
@@ -170,7 +225,109 @@ export async function withRetry<T>(
       throw err;
     }
   }
-  throw new Error("Retry exhausted");
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Retry exhausted");
+}
+
+/**
+ * Gemini çağrısı için akıllı wrapper:
+ *  - Her denemede yeni `getClient()` (key rotation otomatik)
+ *  - 429/5xx/timeout için exponential backoff retry
+ *  - Tüm key'ler tükenirse null döner (caller mock fallback'e geçer)
+ */
+export async function callGemini<T>(
+  task: (
+    client: GoogleGenerativeAI,
+    modelName: string,
+  ) => Promise<T>,
+  options: { retries?: number; timeoutMs?: number; label?: string } = {},
+): Promise<T | null> {
+  const retries = options.retries ?? 3;
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const label = options.label ?? "gemini";
+
+  if (collectApiKeys().length === 0) return null;
+
+  let lastError: unknown;
+  for (let i = 0; i <= retries; i++) {
+    const usedKey = getNextApiKey();
+    if (!usedKey) {
+      console.error(`[${label}] Kullanılabilir key kalmadı (hepsi ölü).`);
+      return null;
+    }
+    const client = new GoogleGenerativeAI(usedKey);
+    const modelName = getModelName();
+    try {
+      return await withTimeout(task(client, modelName), timeoutMs, label);
+    } catch (err: unknown) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+
+      const is401_403 =
+        msg.includes("401") ||
+        msg.includes("403") ||
+        msg.includes("API_KEY_INVALID") ||
+        msg.includes("PERMISSION_DENIED") ||
+        msg.includes("denied access") ||
+        msg.includes("Forbidden") ||
+        msg.includes("Unauthorized");
+      const is429 =
+        !is401_403 &&
+        (msg.includes("429") ||
+          msg.includes("quota") ||
+          msg.includes("Too Many Requests"));
+      const is5xx =
+        !is401_403 &&
+        (msg.includes("503") ||
+          msg.includes("500") ||
+          msg.includes("502") ||
+          msg.includes("504") ||
+          msg.includes("Service Unavailable") ||
+          msg.includes("Internal Server Error") ||
+          msg.includes("Bad Gateway") ||
+          msg.includes("Gateway Timeout") ||
+          msg.includes("high demand") ||
+          msg.includes("overloaded"));
+      const isTimeout = msg.includes("timeout");
+
+      // 401/403 → key kalıcı olarak öldür, hemen başka key dene
+      if (is401_403) {
+        markKeyDead(
+          usedKey,
+          msg.includes("403") || msg.includes("denied")
+            ? "403 Forbidden"
+            : "401 Unauthorized",
+        );
+      } else if (is429) {
+        markKeyRateLimited(usedKey, 60_000);
+      } else if (is5xx) {
+        markKeyRateLimited(usedKey, 8_000);
+      }
+
+      const isRetryable = is401_403 || is429 || is5xx || isTimeout;
+
+      if (isRetryable && i < retries) {
+        // 401/403 ve 5xx için hemen başka key dene — kullanıcıyı bekletme
+        const base = is429 ? 1500 : is401_403 ? 0 : is5xx ? 500 : 400;
+        const waitMs = base === 0 ? 0 : Math.min(base * Math.pow(2, i), 8000);
+        const reason = is401_403
+          ? "Yetkisiz (401/403)"
+          : is429
+            ? "Rate limit (429)"
+            : is5xx
+              ? "Sunucu hatası (5xx)"
+              : "Timeout";
+        console.warn(
+          `[${label}] ${reason} → ${waitMs}ms backoff, farklı key (deneme ${i + 2}/${retries + 1})`,
+        );
+        if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Retry exhausted");
 }
 
 export function friendlyError(err: unknown): string {
@@ -248,32 +405,36 @@ export async function generateChatReply(
   history: ChatMessage[],
   userMessage: string,
 ): Promise<{ reply: string; steps: AgentStep[] }> {
-  const client = getClient();
-  const modelName = getModelName();
-  if (!client) {
+  if (!isGeminiEnabled()) {
     const reply = mockReply(user, txs, userMessage);
     return { reply, steps: [{ type: "response", content: reply }] };
   }
 
-  try {
-    const systemPrompt = buildSystemPrompt(user, txs);
-    const historyForAgent = history.slice(-10).map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+  const systemPrompt = buildSystemPrompt(user, txs);
+  const historyForAgent = history.slice(-10).map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
 
-    const result = await withRetry(() =>
-      runFinanceAgent(
-        client,
-        modelName,
-        systemPrompt,
-        historyForAgent,
-        userMessage,
-        txs,
-        user,
-      ),
+  try {
+    const result = await callGemini(
+      (client, modelName) =>
+        runFinanceAgent(
+          client,
+          modelName,
+          systemPrompt,
+          historyForAgent,
+          userMessage,
+          txs,
+          user,
+        ),
+      { retries: 3, timeoutMs: 35000, label: "gemini-agent" },
     );
 
+    if (!result) {
+      const reply = mockReply(user, txs, userMessage);
+      return { reply, steps: [{ type: "response", content: reply }] };
+    }
     return result;
   } catch (err: unknown) {
     const errMsg = friendlyError(err);
@@ -343,9 +504,7 @@ ${anomalies.length > 0 ? anomalies.map((a) => `- ${a.category}: ${a.message} (z-
   }
 ]`;
 
-  const client = getClient();
-  const modelName = getModelName();
-  if (!client) {
+  if (!isGeminiEnabled()) {
     return {
       text: mockReply(user, txs, prompt),
       structured: mockStructuredRecommendations(user, txs),
@@ -353,17 +512,29 @@ ${anomalies.length > 0 ? anomalies.map((a) => `- ${a.category}: ${a.message} (z-
   }
 
   try {
-    const model = client.getGenerativeModel({
-      model: modelName,
-      systemInstruction: buildSystemPrompt(user, txs),
-      generationConfig: { responseMimeType: "application/json" },
-    });
     console.log(
       "[gemini] Recommendations: gerçek Gemini API kullanılıyor, model:",
-      modelName,
+      getModelName(),
     );
 
-    const res = await withRetry(() => model.generateContent(prompt), 2, 35000);
+    const res = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({
+          model: modelName,
+          systemInstruction: buildSystemPrompt(user, txs),
+          generationConfig: { responseMimeType: "application/json" },
+        });
+        return model.generateContent(prompt);
+      },
+      { retries: 3, timeoutMs: 35000, label: "gemini-recommendations" },
+    );
+
+    if (!res) {
+      return {
+        text: mockReply(user, txs, prompt),
+        structured: mockStructuredRecommendations(user, txs),
+      };
+    }
     const responseText = res.response.text();
     console.log(
       "[gemini] Recommendations raw response length:",
@@ -442,15 +613,11 @@ export async function generateQuiz(
   topic: string,
   difficulty: string,
 ): Promise<string> {
-  const client = getClient();
-  const modelName = getModelName();
-  if (!client) {
+  if (!isGeminiEnabled()) {
     return JSON.stringify(mockQuiz(topic));
   }
 
-  try {
-    const model = client.getGenerativeModel({ model: modelName });
-    const prompt = `"${topic}" konusunda "${difficulty}" seviyesinde bir Türkçe finansal okuryazarlık quiz sorusu üret.
+  const prompt = `"${topic}" konusunda "${difficulty}" seviyesinde bir Türkçe finansal okuryazarlık quiz sorusu üret.
 Türkiye ekonomisi bağlamında somut örnekler kullan.
 
 JSON formatında döndür (sadece JSON, başka bir şey ekleme):
@@ -463,7 +630,18 @@ JSON formatında döndür (sadece JSON, başka bir şey ekleme):
   "topic": "${topic}"
 }`;
 
-    const res = await withRetry(() => model.generateContent(prompt));
+  try {
+    const res = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({
+          model: modelName,
+          generationConfig: { responseMimeType: "application/json" },
+        });
+        return model.generateContent(prompt);
+      },
+      { retries: 3, timeoutMs: 25000, label: "gemini-quiz" },
+    );
+    if (!res) return JSON.stringify(mockQuiz(topic));
     return res.response.text();
   } catch (err: unknown) {
     console.error("[gemini] Quiz HATA:", err);
@@ -474,25 +652,21 @@ JSON formatında döndür (sadece JSON, başka bir şey ekleme):
 export async function generateScenarioAnalysis(
   scenario: string,
 ): Promise<string> {
-  const client = getClient();
-  const modelName = getModelName();
-  if (!client) {
-    return JSON.stringify({
-      scenario,
-      analysis: "Bu senaryo detaylı bir finansal değerlendirme gerektirir.",
-      risks: ["Faiz maliyeti artabilir", "Nakit akışı darlaşabilir"],
-      recommendations: [
-        "Asgari ödemeyle yetinmek yerine mümkün olduğunca fazla ödeme yap",
-        "Kart borcu yoksa kredi kartını sadece nakit akışı aracı olarak kullan",
-      ],
-      financialImpact:
-        "Asgari ödeme yapıldığında kalan borç üzerine aylık ~%3-4 faiz uygulanır.",
-    });
-  }
+  const fallback = JSON.stringify({
+    scenario,
+    analysis: "Bu senaryo detaylı bir finansal değerlendirme gerektirir.",
+    risks: ["Faiz maliyeti artabilir", "Nakit akışı darlaşabilir"],
+    recommendations: [
+      "Asgari ödemeyle yetinmek yerine mümkün olduğunca fazla ödeme yap",
+      "Kart borcu yoksa kredi kartını sadece nakit akışı aracı olarak kullan",
+    ],
+    financialImpact:
+      "Asgari ödeme yapıldığında kalan borç üzerine aylık ~%3-4 faiz uygulanır.",
+  });
 
-  try {
-    const model = client.getGenerativeModel({ model: modelName });
-    const prompt = `Aşağıdaki finansal senaryoyu Türkiye ekonomisi bağlamında analiz et:
+  if (!isGeminiEnabled()) return fallback;
+
+  const prompt = `Aşağıdaki finansal senaryoyu Türkiye ekonomisi bağlamında analiz et:
 "${scenario}"
 
 JSON formatında döndür (sadece JSON):
@@ -504,7 +678,18 @@ JSON formatında döndür (sadece JSON):
   "financialImpact": "Finansal etki açıklaması"
 }`;
 
-    const res = await withRetry(() => model.generateContent(prompt));
+  try {
+    const res = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({
+          model: modelName,
+          generationConfig: { responseMimeType: "application/json" },
+        });
+        return model.generateContent(prompt);
+      },
+      { retries: 3, timeoutMs: 25000, label: "gemini-scenario" },
+    );
+    if (!res) return fallback;
     return res.response.text();
   } catch (err: unknown) {
     console.error("[gemini] Scenario HATA:", err);
@@ -522,20 +707,26 @@ export async function explainConcept(
   concept: string,
   level: string,
 ): Promise<string> {
-  const client = getClient();
-  const modelName = getModelName();
-  if (!client) {
+  if (!isGeminiEnabled()) {
     return `**${concept}** kavramı hakkında bilgi:\n\nBu kavram finansal okuryazarlığın temel taşlarından biridir. (Mock yanıt — GEMINI_API_KEY eklenince gerçek açıklama üretilir.)`;
   }
 
-  try {
-    const model = client.getGenerativeModel({ model: modelName });
-    const prompt = `"${concept}" kavramını "${level}" seviyesinde, Türkçe olarak açıkla.
+  const prompt = `"${concept}" kavramını "${level}" seviyesinde, Türkçe olarak açıkla.
 Türkiye ekonomisinden somut örnekler ver.
 Markdown formatında, kısa ve öz, anlaşılır bir şekilde yaz.
 Güncel veriler ve gerçekçi senaryolar kullan.`;
 
-    const res = await withRetry(() => model.generateContent(prompt));
+  try {
+    const res = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({ model: modelName });
+        return model.generateContent(prompt);
+      },
+      { retries: 3, timeoutMs: 25000, label: "gemini-explain" },
+    );
+    if (!res) {
+      return `**${concept}** kavramı hakkında bilgi üretilemedi (AI servisi şu an müsait değil). Birazdan tekrar deneyin.`;
+    }
     return res.response.text();
   } catch (err: unknown) {
     console.error("[gemini] Explain HATA:", err);
@@ -574,25 +765,16 @@ export async function analyzeProduct(
   user: UserProfile,
   txs: Transaction[],
 ): Promise<ProductAnalysisResult> {
-  const client = getClient();
-  const modelName = getModelName();
-
   // Mali durum özeti — Gemini olsa da olmasa da kullanılır
   const s = summarizeFinance(txs, user.monthlyBudget);
   const monthlyNet = s.thisMonth.net;
   const remainingBudget = Math.max(0, user.monthlyBudget - s.thisMonth.expense);
 
-  if (!client) {
+  if (!isGeminiEnabled()) {
     return mockProductAnalysis(product, user, monthlyNet, remainingBudget);
   }
 
-  try {
-    const model = client.getGenerativeModel({
-      model: modelName,
-      generationConfig: { responseMimeType: "application/json" },
-    });
-
-    const prompt = `Sen bir kişisel finans danışmanısın. Bir kullanıcının istek listesindeki ürünü, finansal durumuna göre analiz edeceksin.
+  const prompt = `Sen bir kişisel finans danışmanısın. Bir kullanıcının istek listesindeki ürünü, finansal durumuna göre analiz edeceksin.
 
 KULLANICI PROFİLİ:
 - İsim: ${user.name}
@@ -630,7 +812,20 @@ Sadece geçerli JSON döndür, açıklama ekleme. ŞEMA:
   "affordabilityNote": "Bütçeye uygunluk hakkında kısa not"
 }`;
 
-    const res = await withRetry(() => model.generateContent(prompt));
+  try {
+    const res = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({
+          model: modelName,
+          generationConfig: { responseMimeType: "application/json" },
+        });
+        return model.generateContent(prompt);
+      },
+      { retries: 3, timeoutMs: 25000, label: "gemini-product" },
+    );
+    if (!res) {
+      return mockProductAnalysis(product, user, monthlyNet, remainingBudget);
+    }
     const text = res.response.text();
     const parsed = JSON.parse(text);
     return {
@@ -748,14 +943,9 @@ export async function generateFinancialReport(
     txCount: txs.length,
   });
 
-  const client = getClient();
-  if (!client) return baseMarkdown;
+  if (!isGeminiEnabled()) return baseMarkdown;
 
-  try {
-    const model = client.getGenerativeModel({
-      model: getModelName(),
-    });
-    const prompt = `Sen kıdemli bir kişisel finans danışmanısın. Aşağıda kullanıcının ${monthLabel} ayına ait finansal verileri var. Bu verileri kullanarak Türkçe, profesyonel, **Markdown formatında** detaylı bir aylık finansal rapor üret.
+  const prompt = `Sen kıdemli bir kişisel finans danışmanısın. Aşağıda kullanıcının ${monthLabel} ayına ait finansal verileri var. Bu verileri kullanarak Türkçe, profesyonel, **Markdown formatında** detaylı bir aylık finansal rapor üret.
 
 Rapor şu bölümleri içersin:
 1. **Yönetici Özeti** (3-4 cümle, kullanıcıya hitaben)
@@ -787,7 +977,15 @@ ${extraContext ? `\n${extraContext}` : ""}
 
 Raporu doğrudan Markdown ile başlat (\`# ${user.name} • ${monthLabel} Finansal Raporu\` başlığıyla). Emoji kullanabilirsin ama abartma. ${user.name}'e ikinci tekil "sen" ile hitap et. Portföy verisi varsa yatırım performansını da yorumla.`;
 
-    const res = await withRetry(() => model.generateContent(prompt), 1, 30000);
+  try {
+    const res = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({ model: modelName });
+        return model.generateContent(prompt);
+      },
+      { retries: 3, timeoutMs: 35000, label: "gemini-report" },
+    );
+    if (!res) return baseMarkdown;
     const text = res.response.text().trim();
     if (text.length < 200) return baseMarkdown;
     return text;
