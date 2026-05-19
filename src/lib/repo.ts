@@ -125,16 +125,52 @@ export async function seedTransactionsIfEmpty(userId: string) {
       userId, type: "gelir", category: "Diğer", amount: 25000,
       note: "Maaş", date: monthAgo(today, m, 1).toISOString(),
     });
+    
+    // Freelance ve ek gelirler
     if (m % 3 === 0) {
       samples.push({
         userId, type: "gelir", category: "Diğer", amount: v(2500),
         note: "Freelance proje ödemesi", date: monthAgo(today, m, 18).toISOString(),
       });
     }
+    if (m % 4 === 2) {
+      samples.push({
+        userId, type: "gelir", category: "Diğer", amount: v(1800),
+        note: "Danışmanlık ücreti", date: monthAgo(today, m, 22).toISOString(),
+      });
+    }
+    
+    // Yatırım gelirleri (temettü, faiz)
     if (m === 2) {
       samples.push({
         userId, type: "gelir", category: "Yatırım", amount: 3200,
         note: "THYAO temettü geliri", date: monthAgo(today, m, 15).toISOString(),
+      });
+    }
+    if (m === 8) {
+      samples.push({
+        userId, type: "gelir", category: "Yatırım", amount: 2850,
+        note: "GARAN temettü geliri", date: monthAgo(today, m, 20).toISOString(),
+      });
+    }
+    if (m % 6 === 1) {
+      samples.push({
+        userId, type: "gelir", category: "Yatırım", amount: v(450),
+        note: "Mevduat faiz geliri", date: monthAgo(today, m, 25).toISOString(),
+      });
+    }
+    
+    // Diğer ek gelirler
+    if (m % 5 === 1) {
+      samples.push({
+        userId, type: "gelir", category: "Diğer", amount: v(650),
+        note: "İkinci el eşya satışı", date: monthAgo(today, m, 12).toISOString(),
+      });
+    }
+    if (m === 0 || m === 5) { // Yılın belirli ayları
+      samples.push({
+        userId, type: "gelir", category: "Diğer", amount: v(1200),
+        note: "Hediye + harçlık geliri", date: monthAgo(today, m, 8).toISOString(),
       });
     }
 
@@ -152,7 +188,7 @@ export async function seedTransactionsIfEmpty(userId: string) {
         note: "Su faturası", date: monthAgo(today, m, 12).toISOString() },
     );
 
-    // ── Market & Gıda (4-5 kez/ay) ──
+    // ── Market & Gıda (haftalık + ekstra) ──
     samples.push(
       { userId, type: "gider", category: "Gıda", amount: v(1400),
         note: "Migros - haftalık market", date: monthAgo(today, m, 3).toISOString() },
@@ -162,17 +198,32 @@ export async function seedTransactionsIfEmpty(userId: string) {
         note: "CarrefourSA haftalık alışveriş", date: monthAgo(today, m, 17).toISOString() },
       { userId, type: "gider", category: "Gıda", amount: v(1200),
         note: "Migros - ay sonu market", date: monthAgo(today, m, 24).toISOString() },
+      // Ek gıda harcamaları
+      { userId, type: "gider", category: "Gıda", amount: v(180),
+        note: "Bakkal - acil alışveriş", date: monthAgo(today, m, 6).toISOString() },
+      { userId, type: "gider", category: "Gıda", amount: v(320),
+        note: "Kasap - et ve tavuk", date: monthAgo(today, m, 14).toISOString() },
+      { userId, type: "gider", category: "Gıda", amount: v(95),
+        note: "Manav - meyve sebze", date: monthAgo(today, m, 21).toISOString() },
+      { userId, type: "gider", category: "Gıda", amount: v(140),
+        note: "Kuruyemiş + çerez", date: monthAgo(today, m, 28).toISOString() },
     );
 
-    // ── Dışarıda Yemek (2-3 kez/ay) ──
+    // ── Dışarıda Yemek & Sosyal Etkinlikler ──
     samples.push(
       { userId, type: "gider", category: "Gıda", amount: v(320),
         note: "Getir yemek siparişi", date: monthAgo(today, m, 7).toISOString() },
       { userId, type: "gider", category: "Gıda", amount: v(450),
         note: "Restoran - arkadaş buluşması", date: monthAgo(today, m, 14).toISOString() },
+      { userId, type: "gider", category: "Eğlence", amount: v(180),
+        note: "Kahve + tatlı (Starbucks)", date: monthAgo(today, m, 8).toISOString() },
+      { userId, type: "gider", category: "Eğlence", amount: v(250),
+        note: "Sinema bileti + patlamış mısır", date: monthAgo(today, m, 16).toISOString() },
+      { userId, type: "gider", category: "Eğlence", amount: v(380),
+        note: "Bowling + arkadaşlarla eğlence", date: monthAgo(today, m, 22).toISOString() },
     );
 
-    // ── Ulaşım (3-4 kez/ay) ──
+    // ── Ulaşım & Araç Masrafları ──
     samples.push(
       { userId, type: "gider", category: "Ulaşım", amount: v(380),
         note: "İstanbulkart dolum", date: monthAgo(today, m, 2).toISOString() },
@@ -180,6 +231,15 @@ export async function seedTransactionsIfEmpty(userId: string) {
         note: "Akaryakıt (BP)", date: monthAgo(today, m, 9).toISOString() },
       { userId, type: "gider", category: "Ulaşım", amount: v(120),
         note: "Uber / BiTaksi", date: monthAgo(today, m, 20).toISOString() },
+      { userId, type: "gider", category: "Ulaşım", amount: v(85),
+        note: "Otopark ücret (AVM)", date: monthAgo(today, m, 15).toISOString() },
+      { userId, type: "gider", category: "Ulaşım", amount: v(45),
+        note: "Köprü geçiş ücreti", date: monthAgo(today, m, 25).toISOString() },
+      // Araç bakım masrafları (birkaç ayda bir)
+      ...(m % 4 === 0 ? [{ 
+        userId, type: "gider", category: "Ulaşım", amount: 1200,
+        note: "Araç bakım + yağ değişimi", date: monthAgo(today, m, 18).toISOString() 
+      }] : []),
     );
 
     // ── Abonelikler (dijital) ──
@@ -201,11 +261,21 @@ export async function seedTransactionsIfEmpty(userId: string) {
         date: monthAgo(today, m, 13).toISOString() },
     );
 
-    // ── Alışveriş ──
+    // ── Alışveriş & Kişisel Harcamalar ──
     samples.push(
       { userId, type: "gider", category: "Alışveriş", amount: v(850),
         note: m % 2 === 0 ? "Trendyol kıyafet" : "Zara mağaza",
         date: monthAgo(today, m, 16).toISOString() },
+      { userId, type: "gider", category: "Alışveriş", amount: v(320),
+        note: "Ayakkabı + çorap (Flo)", date: monthAgo(today, m, 11).toISOString() },
+      { userId, type: "gider", category: "Alışveriş", amount: v(180),
+        note: "Kozmetik + kişisel bakım", date: monthAgo(today, m, 19).toISOString() },
+      { userId, type: "gider", category: "Alışveriş", amount: v(95),
+        note: "Telefon aksesuarı + kılıf", date: monthAgo(today, m, 26).toISOString() },
+      { userId, type: "gider", category: "Alışveriş", amount: v(140),
+        note: "Ev temizlik malzemesi", date: monthAgo(today, m, 13).toISOString() },
+      { userId, type: "gider", category: "Alışveriş", amount: v(65),
+        note: "Kırtasiye + kitap", date: monthAgo(today, m, 27).toISOString() },
     );
 
     // ── Sağlık ──
@@ -214,11 +284,22 @@ export async function seedTransactionsIfEmpty(userId: string) {
         note: "Eczane - vitamin/ilaç", date: monthAgo(today, m, 21).toISOString() },
     );
 
-    // ── Kişisel Bakım (aylık) ──
+    // ── Kişisel Bakım & Sağlık ──
     samples.push(
       { userId, type: "gider", category: "Sağlık", amount: v(420),
         note: "Kuaför / berber + bakım",
         date: monthAgo(today, m, 19).toISOString() },
+      { userId, type: "gider", category: "Sağlık", amount: v(150),
+        note: "Diş fırçası + ağız bakım", date: monthAgo(today, m, 4).toISOString() },
+      // Doktor ziyaretleri (birkaç ayda bir)
+      ...(m % 3 === 1 ? [{ 
+        userId, type: "gider", category: "Sağlık", amount: 800,
+        note: "Doktor muayene + tahlil", date: monthAgo(today, m, 12).toISOString() 
+      }] : []),
+      ...(m % 6 === 0 ? [{ 
+        userId, type: "gider", category: "Sağlık", amount: 1500,
+        note: "Diş kontrolü + tedavi", date: monthAgo(today, m, 20).toISOString() 
+      }] : []),
     );
 
     // ── Evcil Hayvan (aylık - 2 ayda 1 veteriner) ──
@@ -910,6 +991,66 @@ export async function seedSubscriptionsIfEmpty(userId: string) {
     },
     {
       userId,
+      name: "Adobe Creative Suite",
+      amount: 899,
+      frequency: "aylık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(25),
+      active: true,
+      note: "Photoshop, Illustrator, Premiere",
+    },
+    {
+      userId,
+      name: "GitHub Pro",
+      amount: 49,
+      frequency: "aylık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(8),
+      active: true,
+      note: "Private repositories",
+    },
+    {
+      userId,
+      name: "ChatGPT Plus",
+      amount: 299,
+      frequency: "aylık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(18),
+      active: true,
+      note: "GPT-4 erişimi",
+    },
+    {
+      userId,
+      name: "Microsoft 365 Family",
+      amount: 129,
+      frequency: "aylık",
+      category: "Diğer",
+      nextPaymentDate: inDays(22),
+      active: true,
+      note: "Office paketi + OneDrive",
+    },
+    {
+      userId,
+      name: "Amazon Prime",
+      amount: 79,
+      frequency: "aylık",
+      category: "Alışveriş",
+      nextPaymentDate: inDays(5),
+      active: true,
+      note: "Ücretsiz kargo + Prime Video",
+    },
+    {
+      userId,
+      name: "Coursera Plus",
+      amount: 599,
+      frequency: "yıllık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(180),
+      active: false,
+      note: "Online kurs platformu - geçici durduruldu",
+    },
+    {
+      userId,
       name: "Adobe Creative Cloud",
       amount: 1599,
       frequency: "aylık",
@@ -1166,6 +1307,76 @@ export async function seedAssetsIfEmpty(userId: string) {
       createdAt: now,
       updatedAt: now,
     },
+    {
+      userId,
+      type: "hisse",
+      name: "Koç Holding",
+      ticker: "KCHOL",
+      quantity: 150,
+      buyPrice: 180,
+      currentPrice: 195,
+      currentValue: 150 * 195,
+      currency: "TRY",
+      note: "Sektör lideri, temettü kazancı yüksek",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "hisse",
+      name: "Aselsan",
+      ticker: "ASELS",
+      quantity: 80,
+      buyPrice: 95,
+      currentPrice: 108,
+      currentValue: 80 * 108,
+      currency: "TRY",
+      note: "Savunma sektörü yatırımı",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "döviz",
+      name: "Euro",
+      ticker: "EUR/TRY",
+      quantity: 800,
+      buyPrice: 35.8,
+      currentPrice: 40.1,
+      currentValue: 800 * 40.1,
+      currency: "TRY",
+      note: "Avrupa seyahati için biriktirme",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "mevduat",
+      name: "Vadeli Mevduat (6 ay)",
+      ticker: "TRY",
+      quantity: 50000,
+      buyPrice: 1,
+      currentPrice: 1,
+      currentValue: 50000,
+      currency: "TRY",
+      note: "%45 faizli vadeli hesap, 3 ay kaldı",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "altın",
+      name: "Çeyrek Altın",
+      ticker: "XAU/TRY",
+      quantity: 12,
+      buyPrice: 11500,
+      currentPrice: 12850,
+      currentValue: 12 * 12850,
+      currency: "TRY",
+      note: "Fiziki altın koleksiyonu",
+      createdAt: now,
+      updatedAt: now,
+    },
     // ═══ YENİ VARLIKLAR ═══════════════════════════════════════
     {
       userId,
@@ -1374,6 +1585,60 @@ export async function seedIncomesIfEmpty(userId: string) {
       category: "temettü",
       active: true,
       note: "Devlet katkısı dahil yıllık beklenen getiri.",
+    },
+    {
+      userId,
+      name: "Danışmanlık Hizmetleri",
+      amount: 3500,
+      frequency: "aylık",
+      category: "serbest",
+      active: true,
+      note: "Yazılım mimarisi danışmanlığı, 2-3 proje/ay",
+    },
+    {
+      userId,
+      name: "GARAN Temettü",
+      amount: 2850,
+      frequency: "yıllık",
+      category: "temettü",
+      active: true,
+      note: "Garanti Bankası hisse temettü geliri",
+    },
+    {
+      userId,
+      name: "Vadeli Mevduat Faizi",
+      amount: 1875,
+      frequency: "aylık",
+      category: "faiz",
+      active: true,
+      note: "50.000 TL vadeli hesap %45 yıllık faiz",
+    },
+    {
+      userId,
+      name: "Online Kurs Satışları",
+      amount: 2200,
+      frequency: "aylık",
+      category: "serbest",
+      active: true,
+      note: "Udemy + kişisel platform kurs gelirleri",
+    },
+    {
+      userId,
+      name: "Kitap Telif Hakları",
+      amount: 800,
+      frequency: "aylık",
+      category: "serbest",
+      active: true,
+      note: "Programlama kitabı telif gelirleri",
+    },
+    {
+      userId,
+      name: "Airbnb Ev Kirası (Hafta Sonu)",
+      amount: 6500,
+      frequency: "aylık",
+      category: "kira",
+      active: false,
+      note: "Pandemi sonrası kapatıldı, 2025'te yeniden açılabilir",
     },
     {
       userId,
