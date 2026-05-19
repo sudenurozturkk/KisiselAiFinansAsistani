@@ -2,13 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserIdFromReq } from "@/lib/auth";
 import { listWishlistItems, listTransactions, getOrCreateUser } from "@/lib/repo";
 import { summarizeFinance } from "@/lib/finance";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { withRetry, friendlyError } from "@/lib/gemini";
+import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
 
 export const dynamic = "force-dynamic";
-
-const apiKey = process.env.GEMINI_API_KEY;
-const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   const userId = getUserIdFromReq(req);
@@ -35,98 +32,115 @@ export async function POST(req: NextRequest) {
 
   const summary = summarizeFinance(txs, user.monthlyBudget);
   const remainingBudget = Math.max(user.monthlyBudget - summary.thisMonth.expense, 0);
+  const totalEstimatedCost = wishlistItems.reduce(
+    (s, i) => s + (i.price || i.estimatedPrice || 0),
+    0,
+  );
 
-  if (!apiKey) {
-    // Mock fallback
-    const prioritized = wishlistItems
-      .sort((a, b) => {
-        const urgencyOrder = { acil: 4, "ihtiyaç": 3, istek: 2, hobi: 1 };
-        return (urgencyOrder[b.urgency] * b.priority) - (urgencyOrder[a.urgency] * a.priority);
-      })
-      .map((item) => ({
-        itemId: item._id,
-        name: item.name,
-        recommendedAction: (item.priority >= 4 && item.urgency === "acil"
-          ? "buy_now"
-          : item.priority >= 3
-            ? "wait"
-            : "skip") as "buy_now" | "wait" | "skip" | "find_alternative",
-        reason: `Öncelik: ${item.priority}/5, Aciliyet: ${item.urgency}`,
-      }));
+  // Deterministik mock: öncelik + aciliyet bazlı sıralama (her zaman çalışır)
+  const urgencyOrder = { acil: 4, "ihtiyaç": 3, istek: 2, hobi: 1 } as const;
+  const sortedItems = [...wishlistItems].sort(
+    (a, b) =>
+      urgencyOrder[b.urgency] * b.priority -
+      urgencyOrder[a.urgency] * a.priority,
+  );
+  const buildMockAnalysis = () => ({
+    prioritizedItems: sortedItems.map((item) => ({
+      itemId: item._id,
+      name: item.name,
+      recommendedAction: (item.priority >= 4 && item.urgency === "acil"
+        ? "buy_now"
+        : item.priority >= 3 && item.urgency === "ihtiyaç"
+          ? "wait"
+          : item.urgency === "hobi"
+            ? "skip"
+            : "wait") as "buy_now" | "wait" | "skip" | "find_alternative",
+      reason: `Öncelik ${item.priority}/5, aciliyet "${item.urgency}". ${
+        (item.price || 0) > remainingBudget
+          ? "Bu ay kalan bütçeyi aşıyor."
+          : "Bütçe el veriyor."
+      }`,
+    })),
+    budgetPlan: `Bu ay kalan bütçen ${remainingBudget}₺. En yüksek öncelikli ${Math.min(3, sortedItems.length)} öğeye odaklan.`,
+    totalEstimatedCost,
+    affordableThisMonth: remainingBudget,
+    summary: `${user.name}, ${wishlistItems.length} istek listesi öğesi var, toplam ${totalEstimatedCost}₺ tahmini maliyet. Acil ihtiyaçlardan başlayıp hobileri sona bırak.`,
+  });
 
-    return NextResponse.json({
-      analysis: {
-        prioritizedItems: prioritized,
-        budgetPlan: `Bu ay kalan bütçeniz: ${remainingBudget}₺`,
-        totalEstimatedCost: wishlistItems.reduce((s, i) => s + (i.price || i.estimatedPrice || 0), 0),
-        affordableThisMonth: remainingBudget,
-        summary: "AI analizi için API anahtarı gerekli.",
-      },
-    });
+  if (!isGeminiEnabled()) {
+    return NextResponse.json({ analysis: buildMockAnalysis() });
   }
 
-  // Gemini ile akıllı analiz
-  const client = new GoogleGenerativeAI(apiKey);
-  const model = client.getGenerativeModel({ model: modelName });
+  // AI prompt'unu kısa tutmak için en yüksek öncelikli 12 öğe
+  const topItems = sortedItems.slice(0, 12);
+  const itemsText = topItems
+    .map((item, i) => {
+      const price = item.price || item.estimatedPrice || "Bilinmiyor";
+      return `${i + 1}. "${item.name.slice(0, 60)}" — ${price}₺ • öncelik ${item.priority}/5 • ${item.urgency} • ${item.category}${item.note ? ` • not: ${item.note.slice(0, 50)}` : ""}`;
+    })
+    .join("\n");
 
-  const itemsText = wishlistItems.map((item, i) => {
-    const price = item.price || item.estimatedPrice || "Bilinmiyor";
-    return `${i + 1}. "${item.name}" — Fiyat: ${price}₺, Öncelik: ${item.priority}/5, Aciliyet: ${item.urgency}, Kategori: ${item.category}${item.note ? `, Not: "${item.note}"` : ""}${item.url ? `, Link: ${item.url}` : ""}`;
-  }).join("\n");
+  const prompt = `Sen kişisel finans danışmanısın. Kullanıcının istek listesini analiz et ve JSON döndür.
 
-  const prompt = `Sen bir kişisel finans danışmanısın. Kullanıcının istek listesini ve finansal durumunu analiz et.
+KULLANICI: ${user.name} • gelir ${user.monthlyIncome}₺ • bütçe ${user.monthlyBudget}₺ • bu ay kalan ${remainingBudget}₺ • tasarruf hedefi ${user.savingsGoal}₺ • risk ${user.riskTolerance}
 
-KULLANICI PROFİLİ:
-- İsim: ${user.name}
-- Aylık gelir: ${user.monthlyIncome}₺
-- Aylık bütçe: ${user.monthlyBudget}₺
-- Bu ay harcanan: ${summary.thisMonth.expense}₺
-- Kalan bütçe: ${remainingBudget}₺
-- Tasarruf hedefi: ${user.savingsGoal}₺
-- Risk toleransı: ${user.riskTolerance}
-- Hedefler: ${user.goals.join(", ") || "Belirtilmemiş"}
-
-İSTEK LİSTESİ:
+İSTEK LİSTESİ (öncelikli ${topItems.length} öğe):
 ${itemsText}
 
-Aşağıdaki JSON formatında yanıt ver. Yalnızca JSON döndür.
-
+JSON ŞEMA:
 {
   "prioritizedItems": [
-    {
-      "itemId": "öğe _id'si",
-      "name": "Ürün adı",
-      "recommendedAction": "buy_now | wait | skip | find_alternative",
-      "reason": "Neden bu öneri yapılıyor (kişiye özel, detaylı açıklama)",
-      "alternativeSuggestion": "Varsa daha uygun fiyatlı veya daha iyi alternatif önerisi",
-      "estimatedSavings": 0
-    }
+    { "itemId": "...", "name": "...", "recommendedAction": "buy_now|wait|skip|find_alternative", "reason": "kısa kişisel gerekçe", "alternativeSuggestion": "varsa alternatif", "estimatedSavings": 0 }
   ],
-  "budgetPlan": "Bu ay için detaylı bütçe planı ve ne zaman ne alınmalı",
-  "totalEstimatedCost": 0,
+  "budgetPlan": "1-2 cümle bu ay için plan",
+  "totalEstimatedCost": ${totalEstimatedCost},
   "affordableThisMonth": ${remainingBudget},
-  "summary": "Genel durum özeti ve kişiye özel tavsiye (2-3 cümle)"
+  "summary": "2-3 cümle ${user.name}'e hitaben özet"
 }
 
-KURALLAR:
-- Kullanıcının notlarını dikkate al (hobi, ihtiyaç, acil vs.)
-- Acil ihtiyaçları öncelikle, hobileri sonraya bırak
-- Bütçeyi aşmayacak şekilde plan yap
-- Tasarruf hedefini korumaya dikkat et
-- "ihtiyaç" ve "acil" olan öğeleri "istek" ve "hobi"den önce öner
-- Fiyatı bilinmeyenler için tahmini fiyat öner
-- Daha uygun alternatif bulunabiliyorsa öner
-- itemId alanında öğenin gerçek _id değerini kullan`;
+KURAL: itemId mutlaka yukarıdaki öğenin gerçek _id'si olsun → şu id'leri kullan:
+${topItems.map((it, i) => `${i + 1}. ${it._id}`).join("  ")}
+Acil > ihtiyaç > istek > hobi sırasıyla önceliklendir. Bütçeyi aşan hobileri "skip" yap.`;
 
   try {
-    const result = await withRetry(() => model.generateContent(prompt));
+    const result = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({
+          model: modelName,
+          generationConfig: { responseMimeType: "application/json" },
+        });
+        return model.generateContent(prompt);
+      },
+      { retries: 2, timeoutMs: 25000, label: "wishlist-analyze" },
+    );
+
+    if (!result) {
+      return NextResponse.json({
+        analysis: buildMockAnalysis(),
+        fallback: true,
+      });
+    }
+
     const text = result.response.text();
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
+    let analysis: Record<string, unknown>;
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
+    } catch {
+      return NextResponse.json({
+        analysis: buildMockAnalysis(),
+        fallback: true,
+        parseError: true,
+      });
+    }
     return NextResponse.json({ analysis });
   } catch (err: unknown) {
     const msg = friendlyError(err);
     console.error("[wishlist/analyze] Hata:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({
+      analysis: buildMockAnalysis(),
+      fallback: true,
+      error: msg,
+    });
   }
 }

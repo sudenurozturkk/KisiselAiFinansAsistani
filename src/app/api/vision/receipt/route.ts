@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { withRetry, friendlyError } from "@/lib/gemini";
+import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const apiKey = process.env.GEMINI_API_KEY;
-const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
-
 export async function POST(req: NextRequest) {
-  if (!apiKey) {
+  if (!isGeminiEnabled()) {
     return NextResponse.json(
-      { error: "GEMINI_API_KEY tanımlı değil" },
+      { error: "Gemini API key tanımlı değil (.env.local içine GEMINI_API_KEY_1 ekleyin)" },
       { status: 500 },
     );
   }
@@ -29,12 +25,6 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-
-    const client = new GoogleGenerativeAI(apiKey);
-    const model = client.getGenerativeModel({
-      model: modelName,
-      generationConfig: { responseMimeType: "application/json" },
-    });
 
     const prompt = `Sen profesyonel bir fiş/fatura OCR sistemisin. Verilen görüntüyü dikkatle analiz et.
 
@@ -77,16 +67,31 @@ DOĞRULUK KURALLARI:
 - Kısmen okunabilen fişlerde mümkün olan kadar veri çıkar
 - Fiyat formatı: Türkçe (1.299,99) veya İngilizce (1,299.99) olabilir — ikisini de tanı`;
 
-    const result = await withRetry(() => model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          mimeType: mimeType || "image/jpeg",
-          data: image,
-        },
+    const result = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({
+          model: modelName,
+          generationConfig: { responseMimeType: "application/json" },
+        });
+        return model.generateContent([
+          prompt,
+          {
+            inlineData: {
+              mimeType: mimeType || "image/jpeg",
+              data: image,
+            },
+          },
+        ]);
       },
-    ]), 2, 15000); // 2 retry, 15s timeout
+      { retries: 3, timeoutMs: 20000, label: "vision-receipt" },
+    );
 
+    if (!result) {
+      return NextResponse.json(
+        { error: "AI servisi şu an müsait değil. Lütfen birazdan tekrar deneyin." },
+        { status: 503 },
+      );
+    }
     const text = result.response.text();
 
     let parsed;

@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { withRetry, friendlyError } from "@/lib/gemini";
+import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-const apiKey = process.env.GEMINI_API_KEY;
-const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
 /**
  * POST /api/vision/credit-card-statement
@@ -14,9 +10,9 @@ const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
  * Kredi kartı ekstresi (görsel veya text) yükle → AI ile satır satır oku → işlem listesi döndür.
  */
 export async function POST(req: NextRequest) {
-  if (!apiKey) {
+  if (!isGeminiEnabled()) {
     return NextResponse.json(
-      { error: "GEMINI_API_KEY tanımlı değil" },
+      { error: "Gemini API key tanımlı değil (.env.local içine GEMINI_API_KEY_1 ekleyin)" },
       { status: 500 },
     );
   }
@@ -35,12 +31,6 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-
-    const client = new GoogleGenerativeAI(apiKey);
-    const model = client.getGenerativeModel({
-      model: modelName,
-      generationConfig: { responseMimeType: "application/json" },
-    });
 
     const prompt = `Sen bir kredi kartı ekstresi analiz uzmanısın. Aşağıdaki kredi kartı ekstresini dikkatle oku ve tüm harcamaları çıkar.
 
@@ -93,22 +83,34 @@ KURALLAR:
 - Okunamayan kısımlar için confidence düşür.
 - Türkçe açıklamalar kullan.`;
 
-    let result;
-    if (image) {
-      result = await withRetry(() =>
-        model.generateContent([
-          prompt,
-          {
-            inlineData: {
-              mimeType: mimeType || "image/jpeg",
-              data: image,
+    const result = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({
+          model: modelName,
+          generationConfig: { responseMimeType: "application/json" },
+        });
+        if (image) {
+          return model.generateContent([
+            prompt,
+            {
+              inlineData: {
+                mimeType: mimeType || "image/jpeg",
+                data: image,
+              },
             },
-          },
-        ]),
-      );
-    } else {
-      result = await withRetry(() =>
-        model.generateContent(`${prompt}\n\nEKSTRE İÇERİĞİ:\n${textContent}`),
+          ]);
+        }
+        return model.generateContent(
+          `${prompt}\n\nEKSTRE İÇERİĞİ:\n${textContent}`,
+        );
+      },
+      { retries: 3, timeoutMs: 30000, label: "vision-cc-statement" },
+    );
+
+    if (!result) {
+      return NextResponse.json(
+        { error: "AI servisi şu an müsait değil. Lütfen birazdan tekrar deneyin." },
+        { status: 503 },
       );
     }
 

@@ -9,8 +9,7 @@ import {
 import { summarizeFinance } from "@/lib/finance";
 import { simulateScenario, getCategoryAverages } from "@/lib/simulator";
 import { getMarketSummaryForAI } from "@/lib/market";
-import { withRetry, friendlyError } from "@/lib/gemini";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,9 +60,7 @@ export async function POST(req: NextRequest) {
       ? `Portföy: ${assets.map((a) => `${a.name}(${a.ticker || ""}): ${a.quantity} birim × ₺${a.currentPrice}`).join(", ")}`
       : "Portföy bilgisi yok.";
 
-  // AI yorumu üret
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  if (!isGeminiEnabled()) {
     return NextResponse.json({
       ...result,
       aiAnalysis: result.insights.join(" "),
@@ -71,13 +68,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  try {
-    const client = new GoogleGenerativeAI(apiKey);
-    const model = client.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
-    });
-
-    const prompt = `Sen kıdemli bir kişisel finans danışmanısın. Aşağıdaki senaryo simülasyonu sonuçlarını analiz et ve kullanıcıya kişiselleştirilmiş, somut tavsiyeler ver.
+  const prompt = `Sen kıdemli bir kişisel finans danışmanısın. Aşağıdaki senaryo simülasyonu sonuçlarını analiz et ve kullanıcıya kişiselleştirilmiş, somut tavsiyeler ver.
 
 KULLANICI: ${user.name}
 Aylık gelir: ₺${user.monthlyIncome} | Bütçe: ₺${user.monthlyBudget} | Tasarruf hedefi: ₺${user.savingsGoal}
@@ -112,9 +103,24 @@ Görev:
 
 Cevabını düz metin olarak ver, başlık kullanma.`;
 
-    const res = await withRetry(() => model.generateContent(prompt), 1, 30000);
-    const aiText = res.response.text().trim();
+  try {
+    const res = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({ model: modelName });
+        return model.generateContent(prompt);
+      },
+      { retries: 3, timeoutMs: 30000, label: "simulator-analyze" },
+    );
 
+    if (!res) {
+      return NextResponse.json({
+        ...result,
+        aiAnalysis: result.insights.join(" "),
+        source: "fallback",
+      });
+    }
+
+    const aiText = res.response.text().trim();
     return NextResponse.json({
       ...result,
       aiAnalysis: aiText || result.insights.join(" "),

@@ -214,6 +214,34 @@ export async function seedTransactionsIfEmpty(userId: string) {
         note: "Eczane - vitamin/ilaç", date: monthAgo(today, m, 21).toISOString() },
     );
 
+    // ── Kişisel Bakım (aylık) ──
+    samples.push(
+      { userId, type: "gider", category: "Sağlık", amount: v(420),
+        note: "Kuaför / berber + bakım",
+        date: monthAgo(today, m, 19).toISOString() },
+    );
+
+    // ── Evcil Hayvan (aylık - 2 ayda 1 veteriner) ──
+    samples.push(
+      { userId, type: "gider", category: "Diğer", amount: v(380),
+        note: "Mama + tasma + ödül (köpek)",
+        date: monthAgo(today, m, 11).toISOString() },
+    );
+    if (m % 2 === 0) {
+      samples.push({
+        userId, type: "gider", category: "Sağlık", amount: v(620),
+        note: "Veteriner muayene + aşı",
+        date: monthAgo(today, m, 23).toISOString(),
+      });
+    }
+
+    // ── Bağış / Sosyal Sorumluluk (aylık küçük) ──
+    samples.push(
+      { userId, type: "gider", category: "Diğer", amount: 200,
+        note: "Kızılay aylık bağış",
+        date: monthAgo(today, m, 1).toISOString() },
+    );
+
     // ── Dürtüsel Gece Harcamaları (Finansal Ayna için) ──
     // Perşembe & Cumartesi geceleri dürtüsel alışveriş
     if (m <= 3) {
@@ -305,6 +333,42 @@ export async function seedTransactionsIfEmpty(userId: string) {
         { userId, type: "gider", category: "Alışveriş", amount: 2800,
           note: "Yılbaşı hediye alışverişi", date: monthAgo(today, 10, 28).toISOString() },
       );
+    }
+
+    // ── Yıllık Sigorta & Vergiler ────────────────────────────
+    if (m === 5) {
+      samples.push(
+        { userId, type: "gider", category: "Diğer", amount: 7800,
+          note: "Kasko sigortası yenilemesi",
+          date: monthAgo(today, 5, 14).toISOString() },
+        { userId, type: "gider", category: "Diğer", amount: 1450,
+          note: "Trafik sigortası",
+          date: monthAgo(today, 5, 14).toISOString() },
+        { userId, type: "gider", category: "Diğer", amount: 480,
+          note: "DASK zorunlu deprem sigortası",
+          date: monthAgo(today, 5, 15).toISOString() },
+      );
+    }
+    if (m === 6) {
+      samples.push({
+        userId, type: "gider", category: "Diğer", amount: 2350,
+        note: "Motorlu taşıtlar vergisi (1. taksit)",
+        date: monthAgo(today, 6, 25).toISOString(),
+      });
+    }
+    if (m === 0) {
+      samples.push({
+        userId, type: "gider", category: "Diğer", amount: 2350,
+        note: "Motorlu taşıtlar vergisi (2. taksit)",
+        date: monthAgo(today, 0, 25).toISOString(),
+      });
+    }
+    if (m === 8) {
+      samples.push({
+        userId, type: "gider", category: "Sağlık", amount: 1850,
+        note: "Tamamlayıcı sağlık sigortası yenileme",
+        date: monthAgo(today, 8, 12).toISOString(),
+      });
     }
   }
 
@@ -914,6 +978,97 @@ export async function seedSubscriptionsIfEmpty(userId: string) {
       active: true,
       note: "100 Mbps fiber internet, 24 ay taahhüt",
     },
+    // ═══ EKSTRA ABONELİKLER (genişletilmiş demo) ══════════════
+    {
+      userId,
+      name: "BluTV",
+      amount: 89,
+      frequency: "aylık",
+      category: "Eğlence",
+      nextPaymentDate: inDays(11),
+      active: true,
+      note: "Yerli dizi ve film içerikleri.",
+    },
+    {
+      userId,
+      name: "Audible Türkiye",
+      amount: 64,
+      frequency: "aylık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(16),
+      active: true,
+      note: "Aylık 1 sesli kitap kredisi.",
+    },
+    {
+      userId,
+      name: "Notion Plus",
+      amount: 290,
+      frequency: "aylık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(8),
+      active: true,
+      note: "Sınırsız blok, takım çalışması ve AI özellikleri.",
+    },
+    {
+      userId,
+      name: "Figma Professional",
+      amount: 380,
+      frequency: "aylık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(19),
+      active: true,
+      note: "Tasarım çalışmaları için, yıllık ödemede %25 indirim mevcut.",
+    },
+    {
+      userId,
+      name: "GitHub Copilot",
+      amount: 330,
+      frequency: "aylık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(6),
+      active: true,
+      note: "Yazılım geliştirme için AI asistanı.",
+    },
+    {
+      userId,
+      name: "Storytel",
+      amount: 119,
+      frequency: "aylık",
+      category: "Eğitim",
+      nextPaymentDate: inDays(24),
+      active: false,
+      note: "Çok dinlemediğim için iptal ettim, ihtiyaç olursa açabilirim.",
+    },
+    {
+      userId,
+      name: "iyzico Sanal POS",
+      amount: 199,
+      frequency: "aylık",
+      category: "Diğer",
+      nextPaymentDate: inDays(13),
+      active: true,
+      note: "Freelance ödemeler için sanal POS hizmeti.",
+    },
+    {
+      userId,
+      name: "Kasko Sigortası (Otomobil)",
+      amount: 7800,
+      frequency: "yıllık",
+      category: "Diğer",
+      nextPaymentDate: inDays(85),
+      active: true,
+      note: "Otomobil kaskosu, yenileme dönemi yaklaşıyor.",
+    },
+    {
+      userId,
+      name: "Tamamlayıcı Sağlık Sigortası",
+      amount: 1850,
+      frequency: "yıllık",
+      category: "Sağlık",
+      nextPaymentDate: inDays(150),
+      active: true,
+      note: "SGK ile birlikte özel hastane erişimi.",
+    },
   ];
 
   for (const sub of samples) {
@@ -1068,6 +1223,91 @@ export async function seedAssetsIfEmpty(userId: string) {
       createdAt: now,
       updatedAt: now,
     },
+    // ═══ EKSTRA VARLIKLAR (genişletilmiş portföy) ═════════════
+    {
+      userId,
+      type: "hisse",
+      name: "ASELSAN",
+      ticker: "ASELS",
+      quantity: 250,
+      buyPrice: 78,
+      currentPrice: 92.4,
+      currentValue: 250 * 92.4,
+      currency: "TRY",
+      note: "Savunma sanayi büyüme hikâyesi.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "hisse",
+      name: "Tüpraş",
+      ticker: "TUPRS",
+      quantity: 35,
+      buyPrice: 142,
+      currentPrice: 168.5,
+      currentValue: 35 * 168.5,
+      currency: "TRY",
+      note: "Enerji sektörü, temettü potansiyeli yüksek.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "hisse",
+      name: "Apple Inc.",
+      ticker: "AAPL",
+      quantity: 5,
+      buyPrice: 5800,
+      currentPrice: 7250,
+      currentValue: 5 * 7250,
+      currency: "TRY",
+      note: "Yurt dışı hisse — global çeşitlendirme.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "altın",
+      name: "Gümüş (Gram)",
+      ticker: "XAG/TRY",
+      quantity: 100,
+      buyPrice: 38,
+      currentPrice: 46.2,
+      currentValue: 100 * 46.2,
+      currency: "TRY",
+      note: "Altın çeşitlendirmesi olarak gümüş.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "kripto",
+      name: "Tether",
+      ticker: "USDT",
+      quantity: 500,
+      buyPrice: 33,
+      currentPrice: 38.5,
+      currentValue: 500 * 38.5,
+      currency: "TRY",
+      note: "Dolar paritesi takipli stablecoin.",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      userId,
+      type: "fon",
+      name: "BES Devlet Katkılı Hisse Fonu",
+      ticker: "BES-HSE",
+      quantity: 2500,
+      buyPrice: 1.85,
+      currentPrice: 2.34,
+      currentValue: 2500 * 2.34,
+      currency: "TRY",
+      note: "Bireysel emeklilik, %30 devlet katkısı dahil.",
+      createdAt: now,
+      updatedAt: now,
+    },
   ];
 
   for (const a of samples) await addAsset(a);
@@ -1143,6 +1383,52 @@ export async function seedIncomesIfEmpty(userId: string) {
       category: "serbest",
       active: true,
       note: "React ve Next.js kursu, organik satışlar.",
+    },
+    // ═══ EKSTRA GELİR KAYNAKLARI (genişletilmiş demo) ═════════
+    {
+      userId,
+      name: "Patreon Destekleri",
+      amount: 950,
+      frequency: "aylık",
+      category: "serbest",
+      active: true,
+      note: "Açık kaynak projelerim için aylık destekçi gelirleri.",
+    },
+    {
+      userId,
+      name: "ASELSAN Temettü",
+      amount: 1800,
+      frequency: "yıllık",
+      category: "temettü",
+      active: true,
+      note: "ASELS hisseleri için yıllık temettü.",
+    },
+    {
+      userId,
+      name: "Stock Photo Satışları",
+      amount: 750,
+      frequency: "aylık",
+      category: "serbest",
+      active: true,
+      note: "Shutterstock + Adobe Stock pasif gelir.",
+    },
+    {
+      userId,
+      name: "Üsküdar Daire Kirası",
+      amount: 11200,
+      frequency: "aylık",
+      category: "kira",
+      active: true,
+      note: "1+1 stüdyo, kira sözleşmesi 2026 sonuna kadar.",
+    },
+    {
+      userId,
+      name: "Vadeli Mevduat Faiz Getirisi",
+      amount: 2350,
+      frequency: "aylık",
+      category: "temettü",
+      active: true,
+      note: "32 günlük vade, %48 yıllık net faiz.",
     },
   ];
 

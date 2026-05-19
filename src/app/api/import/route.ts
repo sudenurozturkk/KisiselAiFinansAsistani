@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getUserIdFromReq } from "@/lib/auth";
-import { withRetry, friendlyError } from "@/lib/gemini";
+import { callGemini, friendlyError, isGeminiEnabled } from "@/lib/gemini";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const apiKey = process.env.GEMINI_API_KEY;
-const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
-
 export async function POST(req: NextRequest) {
   const userId = getUserIdFromReq(req);
+  void userId;
 
   try {
     const body = await req.json();
@@ -23,10 +20,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // AI olmadan temel parse — satırları al
     const lines = csvText.trim().split(/\r?\n/).filter((l) => l.trim());
 
-    if (!apiKey) {
+    if (!isGeminiEnabled()) {
       // Mock fallback: basit ayrıştırma
       const rows = lines.slice(1).map((line) => {
         const parts = line.split(/[,;\t]/).map((s) => s.trim().replace(/^"|"$/g, ""));
@@ -48,10 +44,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Gemini ile akıllı kategorizasyon
-    const client = new GoogleGenerativeAI(apiKey);
-    const model = client.getGenerativeModel({ model: modelName });
-
+    void lines;
     const prompt = `Aşağıdaki banka ekstresi CSV verisi Türkiye'deki bir banka müşterisine ait.
 Her satırı analiz et ve aşağıdaki JSON array formatında döndür. Sadece JSON döndür, başka metin ekleme.
 
@@ -83,7 +76,24 @@ Kurallar:
 - Tanıyamadığın işlemleri "Diğer" yap, confidence düşük ver.
 - amount her zaman pozitif olsun, type alanı gelir/gider olarak ayırılsın.`;
 
-    const result = await withRetry(() => model.generateContent(prompt));
+    const result = await callGemini(
+      (client, modelName) => {
+        const model = client.getGenerativeModel({
+          model: modelName,
+          generationConfig: { responseMimeType: "application/json" },
+        });
+        return model.generateContent(prompt);
+      },
+      { retries: 3, timeoutMs: 30000, label: "import-csv" },
+    );
+
+    if (!result) {
+      return NextResponse.json(
+        { error: "AI servisi şu an müsait değil. Lütfen birazdan tekrar deneyin." },
+        { status: 503 },
+      );
+    }
+
     const text = result.response.text();
 
     let rows;

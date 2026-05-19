@@ -23,17 +23,30 @@ import { runFinanceAgent } from "./agents";
 
 /* ─── Multi-Key Rotasyon Sistemi ───────────────────────────── */
 
-/** Tüm geçerli API key'lerini topla (boş olmayanlar). */
+/**
+ * Maksimum tanımlanabilir Gemini API key sayısı.
+ * .env.local'de `GEMINI_API_KEY_1` ~ `GEMINI_API_KEY_${MAX_API_KEYS}`
+ * şeklinde tanımlanabilir.
+ */
+const MAX_API_KEYS = 20;
+
+/** Tüm geçerli API key'lerini topla (boş olmayanlar, tekilleştirilmiş). */
 function collectApiKeys(): string[] {
+  const seen = new Set<string>();
   const keys: string[] = [];
-  // Numaralı key'ler: GEMINI_API_KEY_1 ~ GEMINI_API_KEY_5
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= MAX_API_KEYS; i++) {
     const k = process.env[`GEMINI_API_KEY_${i}`]?.trim();
-    if (k) keys.push(k);
+    if (k && !seen.has(k)) {
+      seen.add(k);
+      keys.push(k);
+    }
   }
   // Geriye uyumluluk: tek GEMINI_API_KEY varsa ve listede yoksa ekle
   const legacy = process.env.GEMINI_API_KEY?.trim();
-  if (legacy && !keys.includes(legacy)) keys.push(legacy);
+  if (legacy && !seen.has(legacy)) {
+    seen.add(legacy);
+    keys.push(legacy);
+  }
   return keys;
 }
 
@@ -271,7 +284,8 @@ export async function callGemini<T>(
         msg.includes("PERMISSION_DENIED") ||
         msg.includes("denied access") ||
         msg.includes("Forbidden") ||
-        msg.includes("Unauthorized");
+        msg.includes("Unauthorized") ||
+        msg.includes("not valid");
       const is429 =
         !is401_403 &&
         (msg.includes("429") ||
@@ -291,14 +305,15 @@ export async function callGemini<T>(
           msg.includes("overloaded"));
       const isTimeout = msg.includes("timeout");
 
-      // 401/403 → key kalıcı olarak öldür, hemen başka key dene
+      // 401/403/400-invalid → key kalıcı olarak öldür, hemen başka key dene
       if (is401_403) {
-        markKeyDead(
-          usedKey,
-          msg.includes("403") || msg.includes("denied")
-            ? "403 Forbidden"
-            : "401 Unauthorized",
-        );
+        const reason =
+          msg.includes("403") || msg.includes("denied") || msg.includes("PERMISSION_DENIED")
+            ? "403 Forbidden (project denied)"
+            : msg.includes("API_KEY_INVALID") || msg.includes("not valid")
+              ? "400 API_KEY_INVALID"
+              : "401 Unauthorized";
+        markKeyDead(usedKey, reason);
       } else if (is429) {
         markKeyRateLimited(usedKey, 60_000);
       } else if (is5xx) {
@@ -312,7 +327,7 @@ export async function callGemini<T>(
         const base = is429 ? 1500 : is401_403 ? 0 : is5xx ? 500 : 400;
         const waitMs = base === 0 ? 0 : Math.min(base * Math.pow(2, i), 8000);
         const reason = is401_403
-          ? "Yetkisiz (401/403)"
+          ? "Geçersiz key (400/401/403)"
           : is429
             ? "Rate limit (429)"
             : is5xx
