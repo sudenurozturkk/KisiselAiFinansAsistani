@@ -129,8 +129,10 @@ export const api = {
   clearMessages: () => call<{ ok: boolean }>("/api/chat", { method: "DELETE" }),
 
   // Öneriler
-  getRecommendations: () =>
-    call<RecommendationsResponse>("/api/recommendations"),
+  getRecommendations: (forceRefresh = false) =>
+    call<RecommendationsResponse>(
+      `/api/recommendations${forceRefresh ? "?refresh=1" : ""}`,
+    ),
 
   // Finansal Okuryazarlık
   getQuiz: (topic: string, difficulty = "kolay") =>
@@ -191,12 +193,6 @@ export const api = {
       body: JSON.stringify({ csvText }),
     }),
 
-  // Finansal Rapor (AI)
-  getFinancialReport: () =>
-    call<{ markdown: string; generatedAt: string; user: UserProfile }>(
-      "/api/reports/financial",
-    ),
-
   // Yönetim
   resetDemo: (reseed = true) =>
     call<{ ok: boolean; reseed: boolean }>("/api/admin/reset", {
@@ -236,9 +232,12 @@ export const api = {
 
   // Finansal Ayna — Duygusal Harcama Analizi
   getEmotionalAnalysis: () =>
-    call<import("./emotional").FinancialMirrorResult & { userName: string; monthlyBudget: number }>(
-      "/api/emotional",
-    ),
+    call<
+      import("./emotional").FinancialMirrorResult & {
+        userName: string;
+        monthlyBudget: number;
+      }
+    >("/api/emotional"),
 
   // Akıllı Bildirimler
   getAlerts: () =>
@@ -246,9 +245,113 @@ export const api = {
 
   // AI Abonelik Optimizasyonu
   getSubOptimization: () =>
-    call<import("./sub-optimizer").SubOptimizationReport>("/api/subscriptions/optimize"),
+    call<import("./sub-optimizer").SubOptimizationReport>(
+      "/api/subscriptions/optimize",
+    ),
 
   // AI Günlük Tavsiyeler
   getDailyTips: () =>
     call<{ tips: import("./daily-tips").DailyTip[] }>("/api/tips"),
+
+  // Piyasa Fiyatları (TwelveData)
+  getMarketPrices: (symbols?: string) =>
+    call<{
+      prices: Record<string, import("./market").MarketPrice>;
+      count: number;
+      updatedAt: string;
+    }>(`/api/market-prices${symbols ? `?symbols=${symbols}` : ""}`),
+  getMarketTimeSeries: (symbol: string, days = 30) =>
+    call<{ series: import("./market").MarketTimeSeries }>(
+      `/api/market-prices?timeseries=${symbol}&days=${days}`,
+    ),
+  resolveSymbol: (query: string) =>
+    call<{
+      input: string;
+      resolved: { symbol: string; name: string; exchange: string } | null;
+      found: boolean;
+    }>(`/api/market-prices?resolve=${encodeURIComponent(query)}`),
+  getMarketSummary: () =>
+    call<{ summary: string }>("/api/market-prices?summary=1"),
+
+  // Senaryo Simülatörü AI Analizi
+  analyzeScenario: (data: {
+    adjustments: Record<string, number>;
+    incomeBoost?: number;
+    oneTimeExpense?: number;
+    horizon?: number;
+  }) =>
+    call<{
+      baseline: {
+        monthlyExpense: number;
+        monthlyNet: number;
+        yearlySavings: number;
+      };
+      scenario: {
+        monthlyExpense: number;
+        monthlyNet: number;
+        yearlySavings: number;
+      };
+      delta: {
+        expenseDiff: number;
+        netDiff: number;
+        yearlyDiff: number;
+        expensePct: number;
+      };
+      goalMonths?: number;
+      insights: string[];
+      aiAnalysis: string;
+      source: string;
+    }>("/api/simulator/analyze", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Kredi Kartı Ekstresi Analizi
+  scanCreditCardStatement: (data: {
+    image?: string;
+    mimeType?: string;
+    textContent?: string;
+  }) =>
+    call<{
+      statement: {
+        cardInfo: {
+          bankName: string;
+          cardLast4: string;
+          statementPeriod: string;
+          totalAmount: number;
+          minimumPayment: number;
+        };
+        transactions: {
+          date: string;
+          description: string;
+          amount: number;
+          category: string;
+          type: string;
+          isInstallment: boolean;
+          installmentInfo: string;
+        }[];
+        summary: {
+          totalExpense: number;
+          transactionCount: number;
+          topCategory: string;
+        };
+        confidence: number;
+      };
+    }>("/api/vision/credit-card-statement", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  // Finansal Rapor (çoklu format)
+  getFinancialReport: (format: "web" | "pdf" | "json" = "web") =>
+    call<{
+      format: string;
+      markdown?: string;
+      generatedAt: string;
+      user: UserProfile;
+      htmlTemplate?: string;
+      // json format fields
+      summary?: Record<string, unknown>;
+      portfolio?: Record<string, unknown>;
+    }>(`/api/reports/financial?format=${format}`),
 };

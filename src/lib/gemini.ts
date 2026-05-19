@@ -3,6 +3,11 @@
  *
  * Gemini API varsa: Function calling destekli agentic chat
  * Gemini API yoksa: Mock fallback yanıtlar (UI tamamen çalışır)
+ *
+ * Çoklu API Key Desteği:
+ * .env.local'e GEMINI_API_KEY_1 ~ GEMINI_API_KEY_5 tanımlayarak
+ * kota aşımında otomatik key rotasyonu sağlanır.
+ * Geriye uyumlu: Tek GEMINI_API_KEY de desteklenir.
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type {
@@ -16,18 +21,95 @@ import { summarizeFinance, formatTRY } from "./finance";
 import { detectAnomalies } from "./anomaly";
 import { runFinanceAgent } from "./agents";
 
-function getApiKey() {
-  return process.env.GEMINI_API_KEY || "";
+/* ─── Multi-Key Rotasyon Sistemi ───────────────────────────── */
+
+/** Tüm geçerli API key'lerini topla (boş olmayanlar). */
+function collectApiKeys(): string[] {
+  const keys: string[] = [];
+  // Numaralı key'ler: GEMINI_API_KEY_1 ~ GEMINI_API_KEY_5
+  for (let i = 1; i <= 5; i++) {
+    const k = process.env[`GEMINI_API_KEY_${i}`]?.trim();
+    if (k) keys.push(k);
+  }
+  // Geriye uyumluluk: tek GEMINI_API_KEY varsa ve listede yoksa ekle
+  const legacy = process.env.GEMINI_API_KEY?.trim();
+  if (legacy && !keys.includes(legacy)) keys.push(legacy);
+  return keys;
 }
+
+/** Round-robin sayacı (sunucu ömrü boyunca). */
+let keyIndex = 0;
+
+/** Cooldown takibi — 429 alan key'ler geçici olarak devre dışı. */
+const keyCooldowns = new Map<string, number>(); // key → Date.now() + ms
+
+/** Bir sonraki kullanılabilir key'i al (round-robin + cooldown). */
+function getNextApiKey(): string {
+  const keys = collectApiKeys();
+  if (keys.length === 0) return "";
+
+  const now = Date.now();
+  // Cooldown'u bitmiş key'leri temizle
+  for (const [k, until] of keyCooldowns) {
+    if (until <= now) keyCooldowns.delete(k);
+  }
+
+  // Round-robin ile cooldown'da olmayan ilk key'i bul
+  for (let attempt = 0; attempt < keys.length; attempt++) {
+    const idx = (keyIndex + attempt) % keys.length;
+    const key = keys[idx]!;
+    const cooldownUntil = keyCooldowns.get(key) ?? 0;
+    if (cooldownUntil <= now) {
+      keyIndex = (idx + 1) % keys.length;
+      return key;
+    }
+  }
+
+  // Hepsi cooldown'da — en kısa sürede açılacak olanı kullan
+  let bestKey = keys[0]!;
+  let bestTime = Infinity;
+  for (const key of keys) {
+    const until = keyCooldowns.get(key) ?? 0;
+    if (until < bestTime) {
+      bestTime = until;
+      bestKey = key;
+    }
+  }
+  return bestKey;
+}
+
+/** 429 alan key'i geçici olarak devre dışı bırak (varsayılan 15s). */
+function markKeyRateLimited(key: string, cooldownMs = 15_000) {
+  keyCooldowns.set(key, Date.now() + cooldownMs);
+  const keyCount = collectApiKeys().length;
+  console.warn(
+    `[gemini] Key ...${key.slice(-6)} rate limited, ${cooldownMs / 1000}s cooldown. ` +
+    `(${keyCount} key havuzunda)`,
+  );
+}
+
 function getModelName() {
   return process.env.GEMINI_MODEL || "gemini-2.0-flash";
 }
 
-export const isGeminiEnabled = !!getApiKey();
+/** Gemini API etkin mi? (en az 1 key var mı) */
+export function isGeminiEnabled(): boolean {
+  return collectApiKeys().length > 0;
+}
+// Geriye uyumluluk: modül yüklendiğinde boolean gibi çalışması gerekiyorsa
+// export const isGeminiEnabled = ... yerine fonksiyon kullanıyoruz.
 
 function getClient(): GoogleGenerativeAI | null {
-  const key = getApiKey();
+  const key = getNextApiKey();
   return key ? new GoogleGenerativeAI(key) : null;
+}
+
+/** Mevcut aktif key sayısını logla (debug). */
+export function getKeyPoolStatus() {
+  const keys = collectApiKeys();
+  const now = Date.now();
+  const active = keys.filter((k) => (keyCooldowns.get(k) ?? 0) <= now).length;
+  return { total: keys.length, active, cooldown: keys.length - active };
 }
 
 /** Verilen ms süresinde tamamlanmayan çağrıyı reddeder. */
@@ -54,11 +136,11 @@ export function withTimeout<T>(
   });
 }
 
-/** Rate-limit aware retry wrapper + per-attempt timeout (toplam üst sınır ~14s). */
+/** Rate-limit aware retry wrapper + per-attempt timeout + key rotation. */
 export async function withRetry<T>(
   fn: () => Promise<T>,
   retries = 1,
-  perAttemptTimeoutMs = 12000,
+  perAttemptTimeoutMs = 30000, // gemini-2.5-flash thinking modeli için 30s
 ): Promise<T> {
   for (let i = 0; i <= retries; i++) {
     try {
@@ -70,10 +152,17 @@ export async function withRetry<T>(
         msg.includes("quota") ||
         msg.includes("Too Many Requests");
       const isTimeout = msg.includes("timeout");
+
+      // 429 ise aktif key'i cooldown'a al — sonraki deneme farklı key kullanır
+      if (is429) {
+        const currentKey = getNextApiKey();
+        if (currentKey) markKeyRateLimited(currentKey);
+      }
+
       if ((is429 || isTimeout) && i < retries) {
-        const waitMs = is429 ? 1500 : 200;
+        const waitMs = is429 ? 3000 : 500; // Key rotasyonu sayesinde daha kısa bekleme
         console.warn(
-          `[gemini] ${isTimeout ? "Timeout" : "Rate limit"} — kısa bekleme sonrası tekrar (deneme ${i + 2}/${retries + 1})`,
+          `[gemini] ${isTimeout ? "Timeout" : "Rate limit"} — ${waitMs / 1000}s bekleniyor (deneme ${i + 2}/${retries + 1})`,
         );
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
@@ -199,17 +288,57 @@ export async function generateRecommendations(
   user: UserProfile,
   txs: Transaction[],
 ): Promise<{ text: string; structured: StructuredRecommendation[] }> {
-  const prompt = `Kullanıcı için bu ayki harcamalarını analiz et ve aşağıdaki JSON formatında 4 öneri üret.
-Her öneriyi ayrıntılı, somut TL miktarları veya yüzdelerle destekle.
+  const s = summarizeFinance(txs, user.monthlyBudget);
+  const anomalies = detectAnomalies(txs);
+  const topCats = s.topCategories.slice(0, 5);
+  const today = new Date();
+  const monthLabel = today.toLocaleDateString("tr-TR", {
+    month: "long",
+    year: "numeric",
+  });
 
-JSON formatı (sadece JSON döndür, başka bir şey ekleme):
+  const prompt = `Sen kıdemli bir kişisel finans danışmanısın. ${user.name} adlı kullanıcının ${monthLabel} ayı finansal verilerini analiz edip KİŞİYE ÖZEL, SOMUT ve VERİ ODAKLI 5 öneri üreteceksin.
+
+KULLANICI PROFİLİ:
+- İsim: ${user.name}
+- Aylık gelir: ${formatTRY(user.monthlyIncome)}
+- Aylık bütçe: ${formatTRY(user.monthlyBudget)}
+- Tasarruf hedefi: ${formatTRY(user.savingsGoal)}/ay
+- Risk toleransı: ${user.riskTolerance}
+- Hedefler: ${(user.goals || []).join(", ") || "Belirtilmemiş"}
+
+BU AY VERİLERİ:
+- Toplam gelir: ${formatTRY(s.thisMonth.income)}
+- Toplam gider: ${formatTRY(s.thisMonth.expense)}
+- Net: ${formatTRY(s.thisMonth.net)}
+- Bütçe kullanımı: %${s.thisMonth.budgetUsedPct}
+- Tasarruf oranı: %${s.savingsRate}
+- Günlük ort. harcama: ${formatTRY(s.dailyAvg)}
+- Ay sonu tahmini: ${formatTRY(s.projectedMonthEnd)}
+
+KATEGORİ DAĞILIMI:
+${topCats.map((c) => `- ${c.category}: ${formatTRY(c.amount)} (toplam giderin %${Math.round((c.amount / Math.max(1, s.thisMonth.expense)) * 100)}'i)`).join("\n")}
+
+ANOMALİLER:
+${anomalies.length > 0 ? anomalies.map((a) => `- ${a.category}: ${a.message} (z-score: ${a.zScore})`).join("\n") : "Anomali tespit edilmedi."}
+
+ÖNEMLİ KURALLAR:
+1. Her öneri MUTLAKA kullanıcının gerçek verilerine dayansın (TL tutarları, yüzdeler, kategori adları)
+2. Genel/klişe öneriler YASAK. "Market listesi yap" gibi herkes için geçerli öneriler verme.
+3. Kullanıcının AD'ını kullanarak kişisel hitap et.
+4. Somut TL miktarları ve yüzdeler kullan.
+5. Türkiye ekonomisi bağlamında güncel ve gerçekçi öneriler ver.
+6. Her öneri farklı bir "category" olsun.
+7. actionItems en az 3, en fazla 5 madde olsun.
+
+5 öneriyi şu JSON formatında döndür:
 [
   {
     "category": "tasarruf" | "bütçe" | "yatırım" | "alışveriş",
-    "title": "Kısa başlık",
-    "description": "Detaylı açıklama",
-    "actionItems": ["Eylem 1", "Eylem 2"],
-    "impact": "Tahmini etki (TL veya yüzde)",
+    "title": "Kısa ama spesifik başlık (kullanıcı verisine dayalı)",
+    "description": "2-3 cümle, kullanıcının adını kullanarak, somut verilerle desteklenmiş açıklama",
+    "actionItems": ["Somut eylem 1 (TL/yüzde ile)", "Somut eylem 2", "Somut eylem 3"],
+    "impact": "Tahmini etki (kesin TL miktarı veya yüzde)",
     "priority": "high" | "medium" | "low"
   }
 ]`;
@@ -227,28 +356,66 @@ JSON formatı (sadece JSON döndür, başka bir şey ekleme):
     const model = client.getGenerativeModel({
       model: modelName,
       systemInstruction: buildSystemPrompt(user, txs),
+      generationConfig: { responseMimeType: "application/json" },
     });
     console.log(
       "[gemini] Recommendations: gerçek Gemini API kullanılıyor, model:",
       modelName,
     );
 
-    const res = await withRetry(() => model.generateContent(prompt));
+    const res = await withRetry(() => model.generateContent(prompt), 2, 35000);
     const responseText = res.response.text();
+    console.log(
+      "[gemini] Recommendations raw response length:",
+      responseText.length,
+    );
 
-    // JSON parse etmeyi dene
     let structured: StructuredRecommendation[] = [];
     try {
-      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        structured = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(responseText);
+      structured = Array.isArray(parsed)
+        ? parsed
+        : parsed.recommendations || parsed.data || [];
+      // Validate structure
+      structured = structured
+        .filter(
+          (r) => r && r.title && r.description && Array.isArray(r.actionItems),
+        )
+        .map((r) => ({
+          category: ["tasarruf", "bütçe", "yatırım", "alışveriş"].includes(
+            r.category,
+          )
+            ? r.category
+            : "tasarruf",
+          title: String(r.title).slice(0, 100),
+          description: String(r.description).slice(0, 500),
+          actionItems: r.actionItems.slice(0, 5).map(String),
+          impact: String(r.impact || "Hesaplanıyor").slice(0, 150),
+          priority: ["high", "medium", "low"].includes(r.priority)
+            ? r.priority
+            : "medium",
+        }));
+    } catch (parseErr) {
+      console.error(
+        "[gemini] Recommendations JSON parse hatası:",
+        parseErr,
+        "Raw:",
+        responseText.slice(0, 500),
+      );
+      // Try regex fallback
+      try {
+        const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+        if (jsonMatch) structured = JSON.parse(jsonMatch[0]);
+      } catch {
+        structured = mockStructuredRecommendations(user, txs);
       }
-    } catch {
-      // JSON parse başarısız olursa boş array
+    }
+
+    if (structured.length === 0) {
+      console.warn("[gemini] Recommendations boş döndü, mock kullanılıyor");
       structured = mockStructuredRecommendations(user, txs);
     }
 
-    // Düz metin versiyonu da üret
     const textVersion = structured
       .map(
         (r, i) =>
@@ -258,7 +425,9 @@ JSON formatı (sadece JSON döndür, başka bir şey ekleme):
 
     return { text: textVersion || responseText, structured };
   } catch (err: unknown) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
     const errMsg = friendlyError(err);
+    console.error("[gemini] Recommendations HATA raw:", rawMsg.slice(0, 300));
     console.error("[gemini] Recommendations HATA:", errMsg);
     return {
       text: errMsg,
@@ -551,6 +720,7 @@ function mockProductAnalysis(
 export interface FinancialReportInput {
   user: UserProfile;
   txs: Transaction[];
+  extraContext?: string; // Piyasa verisi, portföy özeti vs.
 }
 
 /**
@@ -561,7 +731,7 @@ export interface FinancialReportInput {
 export async function generateFinancialReport(
   input: FinancialReportInput,
 ): Promise<string> {
-  const { user, txs } = input;
+  const { user, txs, extraContext } = input;
   const s = summarizeFinance(txs, user.monthlyBudget);
   const anomalies = detectAnomalies(txs);
   const today = new Date();
@@ -613,10 +783,11 @@ VERİ ÖZETİ:
       .join(", ")}
 - Anomali sayısı: ${anomalies.length}${anomalies.length ? " — " + anomalies.map((a) => `${a.category} (z=${a.zScore})`).join(", ") : ""}
 - Toplam kayıtlı işlem (6 ay): ${txs.length}
+${extraContext ? `\n${extraContext}` : ""}
 
-Raporu doğrudan Markdown ile başlat (\`# ${user.name} • ${monthLabel} Finansal Raporu\` başlığıyla). Emoji kullanabilirsin ama abartma. ${user.name}'e ikinci tekil "sen" ile hitap et.`;
+Raporu doğrudan Markdown ile başlat (\`# ${user.name} • ${monthLabel} Finansal Raporu\` başlığıyla). Emoji kullanabilirsin ama abartma. ${user.name}'e ikinci tekil "sen" ile hitap et. Portföy verisi varsa yatırım performansını da yorumla.`;
 
-    const res = await withRetry(() => model.generateContent(prompt), 1, 14000);
+    const res = await withRetry(() => model.generateContent(prompt), 1, 30000);
     const text = res.response.text().trim();
     if (text.length < 200) return baseMarkdown;
     return text;
@@ -793,58 +964,147 @@ function mockStructuredRecommendations(
   txs: Transaction[],
 ): StructuredRecommendation[] {
   const s = summarizeFinance(txs, user.monthlyBudget);
-  const top = s.topCategories[0];
+  const top3 = s.topCategories.slice(0, 3);
+  const anomalies = detectAnomalies(txs);
+  const today = new Date();
+  const budgetOver = s.thisMonth.budgetUsedPct > 100;
+  const savingsLow = s.savingsRate < 15;
+  const monthlyNet = s.thisMonth.net;
+  const results: StructuredRecommendation[] = [];
 
-  return [
-    {
+  // 1. En yüksek harcama kategorisine özel
+  if (top3[0]) {
+    const cat = top3[0];
+    const pct = Math.round(
+      (cat.amount / Math.max(1, s.thisMonth.expense)) * 100,
+    );
+    const saving10 = Math.round(cat.amount * 0.1);
+    const saving20 = Math.round(cat.amount * 0.2);
+    results.push({
       category: "tasarruf",
-      title: "Gıda Harcamalarını Optimize Et",
-      description: `${top?.category || "Gıda"} kategorisinde bu ay ${formatTRY(top?.amount || 0)} harcadın. Haftalık market listesi ile %15-20 tasarruf edebilirsin.`,
+      title: `${cat.category} Harcamanı ${formatTRY(saving10)} Azalt`,
+      description: `${user.name}, ${cat.category} kategorisi toplam giderinin %${pct}'ini oluşturuyor (${formatTRY(cat.amount)}). Bu kategoride %10-20 azaltma ile ayda ${formatTRY(saving10)}-${formatTRY(saving20)} tasarruf edebilirsin.`,
       actionItems: [
-        "Haftalık menü planı yap ve listeyle markete git",
-        "Mevsim meyve-sebzelerini tercih et",
-        "Dışarıda yemek sayısını azalt",
+        `${cat.category} harcamana haftalık ${formatTRY(Math.round((cat.amount * 0.9) / 4))} limit koy`,
+        `Son 3 aydaki ${cat.category} harcamalarını karşılaştır`,
+        `Alternatif/daha uygun seçenekleri araştır`,
+        `Her harcama öncesi "gerçekten ihtiyacım var mı" sor`,
       ],
-      impact: `Aylık ~${formatTRY(Math.round((top?.amount || 3000) * 0.15))} tasarruf`,
+      impact: `Aylık ${formatTRY(saving10)}-${formatTRY(saving20)} tasarruf potansiyeli`,
       priority: "high",
-    },
-    {
+    });
+  }
+
+  // 2. Bütçe durumuna özel
+  if (budgetOver) {
+    const overAmount = s.thisMonth.expense - user.monthlyBudget;
+    results.push({
       category: "bütçe",
-      title: "Bütçe Limitlerini Gözden Geçir",
-      description: `Bütçe kullanımın %${s.thisMonth.budgetUsedPct}. Kategori bazlı alt limitler belirleyerek harcamalarını kontrol et.`,
+      title: `Bütçeni ${formatTRY(overAmount)} Aştın — Acil Müdahale`,
+      description: `${user.name}, bu ay bütçeni %${s.thisMonth.budgetUsedPct - 100} aştın (${formatTRY(overAmount)} fazla). Ay sonuna kadar günlük harcamanı ${formatTRY(Math.round(Math.max(0, user.monthlyBudget - s.thisMonth.expense) / Math.max(1, 30 - today.getDate())))} altına çekmelisin.`,
       actionItems: [
-        "Her kategori için aylık limit belirle",
-        "Sabit giderleri otomatik ödemeye al",
-        "Değişken giderleri haftalık takip et",
+        `Kalan ${30 - new Date().getDate()} gün için günlük ${formatTRY(Math.max(0, Math.round((user.monthlyBudget - s.thisMonth.expense) / Math.max(1, 30 - new Date().getDate()))))} bütçe uygula`,
+        "Zorunlu olmayan harcamaları ay sonuna kadar durdur",
+        `${top3[0]?.category || "En yüksek kategori"} harcamalarını gözden geçir`,
+        "Otomatik bütçe uyarısı kur",
       ],
-      impact: `Bütçe kullanımını %80'in altında tutma`,
-      priority: "medium",
-    },
-    {
-      category: "yatırım",
-      title: "Düşük Riskli Yatırım Başlat",
-      description: `Risk toleransın "${user.riskTolerance}" seviyesinde. Aylık sabit tutarda yatırım fonu alabilirsin.`,
+      impact: `${formatTRY(overAmount)} bütçe açığını kapatma`,
+      priority: "high",
+    });
+  } else {
+    const remaining = user.monthlyBudget - s.thisMonth.expense;
+    results.push({
+      category: "bütçe",
+      title: `Kalan ${formatTRY(remaining)} Bütçeni Akıllıca Kullan`,
+      description: `${user.name}, bütçenden ${formatTRY(remaining)} kaldı (%${100 - s.thisMonth.budgetUsedPct}). Bu tutarın bir kısmını tasarrufa, bir kısmını da yatırıma yönlendir.`,
       actionItems: [
-        "Acil durum fonu oluştur (3 aylık gider)",
-        "Aylık otomatik fon alım talimatı ver",
-        "Vadeli mevduat faiz oranlarını karşılaştır",
+        `${formatTRY(Math.round(remaining * 0.5))}'sini tasarruf hesabına aktar`,
+        `${formatTRY(Math.round(remaining * 0.3))}'sini yatırım için ayır`,
+        `Kalan ${formatTRY(Math.round(remaining * 0.2))}'sini esnek harcama olarak tut`,
       ],
-      impact: `Aylık ${formatTRY(Math.round(user.monthlyIncome * 0.1))} yatırım`,
+      impact: `${formatTRY(Math.round(remaining * 0.5))} ek tasarruf`,
       priority: "medium",
-    },
-    {
+    });
+  }
+
+  // 3. Yatırım — risk toleransına özel
+  const investAmount = Math.round(Math.max(0, monthlyNet) * 0.3);
+  const riskMap = {
+    düşük: { tip: "vadeli mevduat veya devlet tahvili", returnRange: "%25-35" },
+    orta: { tip: "karma yatırım fonu veya altın", returnRange: "%30-50" },
+    yüksek: { tip: "hisse senedi veya kripto", returnRange: "%40-80+" },
+  };
+  const riskInfo = riskMap[user.riskTolerance] || riskMap.orta;
+  results.push({
+    category: "yatırım",
+    title: `Aylık ${formatTRY(investAmount)} Yatırım Planı`,
+    description: `${user.name}, net gelirinin (${formatTRY(monthlyNet)}) %30'unu (${formatTRY(investAmount)}) yatırıma yönlendirebilirsin. Risk toleransın "${user.riskTolerance}" — ${riskInfo.tip} uygun olabilir. (Yatırım tavsiyesi değildir.)`,
+    actionItems: [
+      `Her ay ${formatTRY(investAmount)} otomatik yatırım talimatı ver`,
+      `${riskInfo.tip} araştır`,
+      `Acil durum fonu: ${formatTRY(s.thisMonth.expense * 3)} hedefle (3 aylık gider)`,
+      "Yatırımlarını çeşitlendir, tek enstrümana yükleme",
+    ],
+    impact: `Yıllık ${riskInfo.returnRange} potansiyel getiri`,
+    priority: monthlyNet > 0 ? "medium" : "low",
+  });
+
+  // 4. Anomali varsa ona özel, yoksa alışveriş stratejisi
+  if (anomalies.length > 0) {
+    const a = anomalies[0];
+    const excessAmount = Math.round(a.currentAmount - a.avgAmount);
+    results.push({
       category: "alışveriş",
-      title: "Bilinçli Alışveriş Stratejisi",
-      description: `Büyük alışverişlerde taksit + nakit karşılaştırması yap. İndirim dönemlerini takip et.`,
+      title: `${a.category} Anomalisi: ${formatTRY(excessAmount)} Fazla Harcama`,
+      description: `${user.name}, ${a.category} kategorisinde normalin üstünde harcama tespit edildi. Bu ay ${formatTRY(a.currentAmount)} harcadın, ortalaman ${formatTRY(a.avgAmount)}. ${a.message}`,
       actionItems: [
-        "500₺ üstü alışverişlerde 48 saat bekle",
-        "Fiyat karşılaştırma araçları kullan",
-        "Taksit maliyetini toplam fiyata ekleyerek değerlendir",
+        `${a.category} harcamalarını tek tek gözden geçir`,
+        `Bir sonraki ay ${formatTRY(a.avgAmount)} limitine geri dön`,
+        "Büyük harcamalar için 48 saat bekleme kuralı uygula",
+        "Taksit ve abonelik kontrolü yap",
       ],
-      impact: `Alışveriş harcamalarında %20 tasarruf`,
+      impact: `Aylık ${formatTRY(excessAmount)} potansiyel tasarruf`,
+      priority: "high",
+    });
+  } else {
+    const shopCat = s.topCategories.find((c) => c.category === "Alışveriş");
+    const shopAmount = shopCat?.amount || 0;
+    results.push({
+      category: "alışveriş",
+      title:
+        shopAmount > 0
+          ? `Alışveriş Harcamanı (${formatTRY(shopAmount)}) Optimize Et`
+          : "Bilinçli Alışveriş Stratejisi",
+      description: `${user.name}, ${shopAmount > 0 ? `bu ay alışverişe ${formatTRY(shopAmount)} harcadın.` : "Alışveriş harcamalarını optimize edebilirsin."} Fiyat karşılaştırma ve zamanlama ile %15-25 tasarruf mümkün.`,
+      actionItems: [
+        `${formatTRY(Math.round(user.monthlyIncome * 0.02))} üstü alışverişlerde fiyat karşılaştır`,
+        "İndirim dönemlerini takip et (Kasım, yaz sonu)",
+        "Taksit maliyetini toplam fiyata ekleyerek değerlendir",
+        "İstek listesi oluştur, dürtüsel alımlardan kaçın",
+      ],
+      impact: `Aylık ${formatTRY(Math.round(shopAmount * 0.2 || user.monthlyIncome * 0.02))} tasarruf`,
       priority: "low",
-    },
-  ];
+    });
+  }
+
+  // 5. Tasarruf hedefi takibi
+  if (savingsLow && user.savingsGoal > 0) {
+    const gap = Math.max(0, user.savingsGoal - Math.max(0, monthlyNet));
+    results.push({
+      category: "tasarruf",
+      title: `Tasarruf Hedefine ${formatTRY(gap)} Uzaktasın`,
+      description: `${user.name}, aylık tasarruf hedefin ${formatTRY(user.savingsGoal)} ama bu ay net birikiminiz ${formatTRY(monthlyNet)}. Hedefin %${Math.round((Math.max(0, monthlyNet) / Math.max(1, user.savingsGoal)) * 100)}'ine ulaştın.`,
+      actionItems: [
+        `En yüksek 2 kategoride toplam ${formatTRY(Math.round(gap / 2))} kısıntı yap`,
+        `Gelirini artırmak için ek iş/freelance fırsatlarını değerlendir`,
+        `Otomatik tasarruf: maaş günü ${formatTRY(Math.round(user.savingsGoal * 0.5))} ayrı hesaba aktar`,
+      ],
+      impact: `Hedefe ulaşma: aylık +${formatTRY(gap)}`,
+      priority: "high",
+    });
+  }
+
+  return results.slice(0, 5);
 }
 
 function mockQuiz(topic: string) {

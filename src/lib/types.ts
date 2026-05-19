@@ -325,28 +325,31 @@ export type AssetType =
   | "fon"
   | "diğer";
 
-export const ASSET_TYPES: { value: AssetType; label: string; icon: string }[] = [
-  { value: "altın", label: "Altın", icon: "🥇" },
-  { value: "döviz", label: "Döviz", icon: "💱" },
-  { value: "hisse", label: "Hisse Senedi", icon: "📈" },
-  { value: "kripto", label: "Kripto Para", icon: "₿" },
-  { value: "gayrimenkul", label: "Gayrimenkul", icon: "🏠" },
-  { value: "fon", label: "Yatırım Fonu", icon: "🏦" },
-  { value: "diğer", label: "Diğer", icon: "📦" },
-];
+export const ASSET_TYPES: { value: AssetType; label: string; icon: string }[] =
+  [
+    { value: "altın", label: "Altın", icon: "🥇" },
+    { value: "döviz", label: "Döviz", icon: "💱" },
+    { value: "hisse", label: "Hisse Senedi", icon: "📈" },
+    { value: "kripto", label: "Kripto Para", icon: "₿" },
+    { value: "gayrimenkul", label: "Gayrimenkul", icon: "🏠" },
+    { value: "fon", label: "Yatırım Fonu", icon: "🏦" },
+    { value: "diğer", label: "Diğer", icon: "📦" },
+  ];
 
 /* ─── Varlık (Asset) ────────────────────────────────────────── */
 export interface Asset {
   _id: string;
   userId: string;
   type: AssetType;
-  name: string;            // Örn: "Gram Altın", "THYAO", "Bitcoin"
-  ticker?: string;         // Borsa sembolü: "THYAO.IS", "BTC", "USD"
-  quantity: number;         // Miktar (gram, adet, lot, birim)
-  buyPrice: number;         // Birim alış fiyatı (₺)
-  currentPrice: number;     // Birim güncel fiyat (₺)
-  currentValue: number;     // Toplam güncel değer = quantity × currentPrice
-  currency: string;         // Para birimi (varsayılan TRY)
+  name: string; // Örn: "Gram Altın", "THYAO", "Bitcoin"
+  ticker?: string; // Borsa sembolü: "THYAO.IS", "BTC", "USD"
+  quantity: number; // Miktar (gram, adet, lot, birim)
+  buyPrice: number; // Birim alış fiyatı (₺)
+  currentPrice: number; // Birim güncel fiyat (₺)
+  currentValue: number; // Toplam güncel değer = quantity × currentPrice
+  currency: string; // Para birimi (varsayılan TRY)
+  dailyChange?: number; // Günlük fiyat değişimi (₺)
+  dailyChangePct?: number; // Günlük değişim yüzdesi
   note?: string;
   createdAt: string;
   updatedAt: string;
@@ -354,9 +357,9 @@ export interface Asset {
 
 export interface AssetsResponse {
   assets: Asset[];
-  totalValue: number;       // Tüm varlıkların toplam değeri
-  totalProfit: number;      // Toplam kâr/zarar
-  profitPercent: number;    // Yüzdesel getiri
+  totalValue: number; // Tüm varlıkların toplam değeri
+  totalProfit: number; // Toplam kâr/zarar
+  profitPercent: number; // Yüzdesel getiri
   byType: { type: AssetType; label: string; total: number; count: number }[];
 }
 
@@ -366,8 +369,8 @@ export type IncomeFrequency = "haftalık" | "aylık" | "yıllık";
 export interface IncomeSource {
   _id: string;
   userId: string;
-  name: string;             // Örn: "Ev 1 Kirası", "Temettü — THYAO"
-  amount: number;           // Gelir miktarı (₺)
+  name: string; // Örn: "Ev 1 Kirası", "Temettü — THYAO"
+  amount: number; // Gelir miktarı (₺)
   frequency: IncomeFrequency;
   category: "kira" | "temettü" | "serbest" | "ek_iş" | "diğer";
   active: boolean;
@@ -375,7 +378,10 @@ export interface IncomeSource {
   createdAt: string;
 }
 
-export const INCOME_CATEGORIES: { value: IncomeSource["category"]; label: string }[] = [
+export const INCOME_CATEGORIES: {
+  value: IncomeSource["category"];
+  label: string;
+}[] = [
   { value: "kira", label: "Kira Geliri" },
   { value: "temettü", label: "Temettü / Kâr Payı" },
   { value: "serbest", label: "Serbest Meslek" },
@@ -385,6 +391,6 @@ export const INCOME_CATEGORIES: { value: IncomeSource["category"]; label: string
 
 export interface IncomesResponse {
   incomes: IncomeSource[];
-  totalMonthly: number;     // Aylığa normalize edilmiş toplam
+  totalMonthly: number; // Aylığa normalize edilmiş toplam
   activeCount: number;
 }

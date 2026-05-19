@@ -31,28 +31,51 @@ export async function POST(req: NextRequest) {
     }
 
     const client = new GoogleGenerativeAI(apiKey);
-    const model = client.getGenerativeModel({ model: modelName });
+    const model = client.getGenerativeModel({
+      model: modelName,
+      generationConfig: { responseMimeType: "application/json" },
+    });
 
-    const prompt = `Bu bir market, restoran veya mağaza fişinin fotoğrafı. Lütfen fişi oku ve aşağıdaki JSON formatında bilgileri çıkar. Yalnızca JSON döndür, başka bir şey ekleme.
+    const prompt = `Sen profesyonel bir fiş/fatura OCR sistemisin. Verilen görüntüyü dikkatle analiz et.
+
+ÖNCELİKLİ TALİMATLAR:
+1. Görüntü bulanık, eğik veya düşük kaliteli olabilir — mümkün olan en iyi şekilde oku.
+2. Her satırı dikkatlice incele, rakamları doğru çıkar.
+3. Türkçe karakterleri (ö, ü, ç, ş, ğ, ı, İ) doğru kullan.
+4. KDV, toplam, ara toplam gibi satırları ayırt et.
+5. Tarihi bulmaya çalış; bulamazsan bugünün tarihini kullan.
+
+JSON formatında döndür. Yalnızca JSON döndür, başka metin ekleme:
 
 {
-  "storeName": "Mağaza/restoran adı",
-  "date": "YYYY-MM-DD formatında tarih (yoksa bugünün tarihi)",
+  "storeName": "Mağaza/restoran adı (büyük harfle başlasın)",
+  "date": "YYYY-MM-DD formatında tarih",
   "totalAmount": 0.00,
   "category": "Gıda|Ulaşım|Kira/Fatura|Eğlence|Alışveriş|Sağlık|Eğitim|Yatırım|Diğer",
   "items": [
     { "name": "Ürün adı", "quantity": 1, "unitPrice": 0.00, "totalPrice": 0.00 }
   ],
   "currency": "TRY",
-  "confidence": 0.95
+  "confidence": 0.95,
+  "notes": "Ek bilgi veya uyarı (opsiyonel)"
 }
 
-Kurallar:
-- category alanı, mağaza ve ürünlere göre en uygun kategoriyi seç.
-- Market fişleri → "Gıda", restoran → "Gıda", eczane → "Sağlık", kıyafet → "Alışveriş"
-- totalAmount fişin en altındaki TOPLAM tutarı olsun.
-- Eğer fiş okunamıyorsa confidence değerini düşük (0.3 altı) ver.
-- Türk Lirası ise currency: "TRY".`;
+KATEGORİ KURALLARI:
+- Market (Migros, BİM, A101, CarrefourSA, ŞOK, Macro Center) → "Gıda"
+- Restoran, kafe, fast food (McDonald's, Burger King, Starbucks) → "Gıda"
+- Akaryakıt (Shell, BP, Opet, Petrol Ofisi) → "Ulaşım"
+- Eczane, hastane, optik → "Sağlık"
+- Kıyafet, elektronik, Trendyol, Hepsiburada → "Alışveriş"
+- Sinema, tiyatro, etkinlik → "Eğlence"
+- Elektrik, su, doğalgaz, internet → "Kira/Fatura"
+- Kurs, kitapçı, kırtasiye → "Eğitim"
+
+DOĞRULUK KURALLARI:
+- totalAmount fişin en altındaki TOPLAM/GENEL TOPLAM tutarı olsun
+- items listesi boş olabilir ama totalAmount kesinlikle doğru olmalı
+- Eğer fiş hiç okunamıyorsa confidence değerini 0.2 yap
+- Kısmen okunabilen fişlerde mümkün olan kadar veri çıkar
+- Fiyat formatı: Türkçe (1.299,99) veya İngilizce (1,299.99) olabilir — ikisini de tanı`;
 
     const result = await withRetry(() => model.generateContent([
       prompt,
@@ -62,7 +85,7 @@ Kurallar:
           data: image,
         },
       },
-    ]));
+    ]), 2, 15000); // 2 retry, 15s timeout
 
     const text = result.response.text();
 
@@ -72,9 +95,21 @@ Kurallar:
       parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
     } catch {
       return NextResponse.json(
-        { error: "Fiş okunamadı. Lütfen daha net bir fotoğraf deneyin." },
+        {
+          error: "Fiş okunamadı. Lütfen daha net bir fotoğraf deneyin.",
+          hint: "Fişi düz bir zemine koyup, iyi aydınlatılmış ortamda, yakından ve net çekin.",
+          rawText: text.slice(0, 300),
+        },
         { status: 422 },
       );
+    }
+
+    // Validasyon
+    if (parsed.confidence !== undefined && parsed.confidence < 0.3) {
+      return NextResponse.json({
+        receipt: parsed,
+        warning: "Fiş düşük güvenle okundu. Lütfen verileri kontrol edin.",
+      });
     }
 
     return NextResponse.json({ receipt: parsed });

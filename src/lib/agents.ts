@@ -17,8 +17,10 @@ import type {
 } from "./types";
 import { summarizeFinance, formatTRY, buildInsights } from "./finance";
 import { detectAnomalies } from "./anomaly";
-import { listWishlistItems } from "./repo";
+import { listWishlistItems, listAssets } from "./repo";
 import { analyzeEmotionalPatterns } from "./emotional";
+import { fetchPrices, resolveSymbol, getMarketSummaryForAI, resolveAssetPrice } from "./market";
+import { scrapeWithPlaywright } from "./playwright-scraper";
 
 /* ─── Agent Tool Definitions (Gemini Function Declarations) ──── */
 
@@ -138,6 +140,59 @@ const toolDeclarations: FunctionDeclaration[] = [
     parameters: {
       type: SchemaType.OBJECT,
       properties: {},
+    },
+  },
+  {
+    name: "resolve_stock_symbol",
+    description:
+      "Kullanıcının doğal dilde yazdığı hisse/varlık adını borsa sembolüne çevirir. Örneğin 'Türk Hava Yolları' → 'THYAO', 'altın' → 'XAU/USD'. Ayrıca sembolün güncel fiyatını da döndürür.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        query: {
+          type: SchemaType.STRING,
+          description: "Kullanıcının yazdığı varlık adı veya kısaltma (örn: THY, Bitcoin, dolar, Garanti)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "get_market_prices",
+    description:
+      "Güncel piyasa fiyatlarını çeker: döviz kurları (USD/TRY, EUR/TRY), altın, kripto (BTC, ETH) ve BIST hisse senetleri. Gerçek zamanlı TwelveData API verileri kullanır.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        symbols: {
+          type: SchemaType.STRING,
+          description: "İstenen semboller virgülle ayrılmış (örn: 'USD,EUR,BTC,THYAO,XAU'). Boş bırakılırsa varsayılan piyasa özeti döner.",
+        },
+      },
+    },
+  },
+  {
+    name: "get_portfolio_summary",
+    description:
+      "Kullanıcının yatırım portföyünü (hisseler, altın, kripto, döviz) güncel piyasa fiyatlarıyla özetler. Toplam değer, kâr/zarar ve varlık dağılımını gösterir.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {},
+    },
+  },
+  {
+    name: "scrape_product_url",
+    description:
+      "Bir ürün URL'sinden headless browser ile gerçek zamanlı bilgi çeker: ürün adı, fiyat, marka, görsel, açıklama, stok durumu. Trendyol, Hepsiburada, Amazon, Udemy, D&R gibi siteleri destekler. Kullanıcı bir ürün linki paylaştığında veya fiyat sorduğunda bu aracı kullan.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        url: {
+          type: SchemaType.STRING,
+          description: "Ürün sayfasının tam URL'si (https://...)",
+        },
+      },
+      required: ["url"],
     },
   },
 ];
@@ -422,8 +477,168 @@ async function executeTool(
       return executeEmotionalPatterns(txs);
     case "financial_literacy_explain":
       return executeFinancialLiteracyExplain(args);
+    case "resolve_stock_symbol":
+      return await executeResolveSymbol(args);
+    case "get_market_prices":
+      return await executeGetMarketPrices(args);
+    case "get_portfolio_summary":
+      return await executeGetPortfolioSummary(user);
+    case "scrape_product_url":
+      return await executeScrapeProductUrl(args);
     default:
       return { error: `Bilinmeyen araç: ${toolName}` };
+  }
+}
+
+/* ─── Piyasa Tool'ları ──────────────────────────────────────── */
+
+async function executeResolveSymbol(
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const query = (args.query as string) || "";
+  const resolved = resolveSymbol(query);
+
+  if (!resolved) {
+    return {
+      found: false,
+      query,
+      message: `"${query}" için bir borsa sembolü bulunamadı. Tam adı veya BIST kodunu deneyin.`,
+    };
+  }
+
+  // Güncel fiyat çek
+  let price = 0;
+  try {
+    const mp = await fetchPrices([resolved.symbol]);
+    const data = mp[resolved.symbol];
+    if (data) price = data.price;
+  } catch { /* fallback */ }
+
+  return {
+    found: true,
+    query,
+    symbol: resolved.symbol,
+    name: resolved.name,
+    exchange: resolved.exchange,
+    currentPrice: price,
+    message: `"${query}" → ${resolved.symbol} (${resolved.name}) olarak algılandı. Güncel fiyat: ${price > 0 ? price.toLocaleString("tr-TR") : "bilgi yok"}`,
+  };
+}
+
+async function executeGetMarketPrices(
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const symbolsStr = (args.symbols as string) || "";
+
+  if (!symbolsStr) {
+    // Varsayılan piyasa özeti
+    const text = await getMarketSummaryForAI();
+    return { summary: text, source: "twelvedata" };
+  }
+
+  const symbolList = symbolsStr.split(",").map(s => s.trim()).filter(Boolean);
+  const prices = await fetchPrices(symbolList);
+
+  const formatted = Object.entries(prices).map(([sym, p]) => ({
+    symbol: sym,
+    name: p.name,
+    price: p.price,
+    change: p.change,
+    changePercent: p.changePercent,
+    currency: p.currency,
+  }));
+
+  return {
+    prices: formatted,
+    count: formatted.length,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function executeGetPortfolioSummary(
+  user: UserProfile,
+): Promise<Record<string, unknown>> {
+  const assets = await listAssets(user.userId);
+
+  // Güncel fiyatlarla güncelle
+  const updated = await Promise.all(
+    assets.map(async (a) => {
+      try {
+        const realPrice = await resolveAssetPrice(a.ticker, a.type);
+        if (realPrice && realPrice > 0) {
+          return { ...a, currentPrice: realPrice, currentValue: a.quantity * realPrice };
+        }
+      } catch { /* mevcut fiyatla devam */ }
+      return a;
+    }),
+  );
+
+  const totalValue = updated.reduce((s, a) => s + a.currentValue, 0);
+  const totalCost = updated.reduce((s, a) => s + a.quantity * a.buyPrice, 0);
+  const totalProfit = totalValue - totalCost;
+
+  return {
+    totalValue,
+    totalCost,
+    totalProfit,
+    profitPercent: totalCost > 0 ? ((totalProfit / totalCost) * 100).toFixed(1) : "0",
+    assets: updated.map(a => ({
+      name: a.name,
+      type: a.type,
+      ticker: a.ticker || "-",
+      quantity: a.quantity,
+      buyPrice: a.buyPrice,
+      currentPrice: a.currentPrice,
+      currentValue: a.currentValue,
+      profit: (a.currentPrice - a.buyPrice) * a.quantity,
+      profitPct: a.buyPrice > 0 ? (((a.currentPrice - a.buyPrice) / a.buyPrice) * 100).toFixed(1) : "0",
+    })),
+    assetCount: updated.length,
+  };
+}
+
+/* ─── Playwright Ürün Scrape Tool'u ─────────────────────────── */
+
+async function executeScrapeProductUrl(
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const url = (args.url as string) || "";
+
+  if (!url || !url.startsWith("http")) {
+    return {
+      success: false,
+      error: "Geçerli bir URL gerekli (https://... ile başlamalı)",
+    };
+  }
+
+  try {
+    console.log(`[agent] scrape_product_url çağrıldı: ${url}`);
+    const data = await scrapeWithPlaywright(url);
+    const d = data as unknown as Record<string, unknown>;
+
+    return {
+      success: !!(data.name || data.price),
+      method: "playwright_headless_browser",
+      url,
+      name: data.name || null,
+      price: data.price || null,
+      originalPrice: d.originalPrice || null,
+      brand: data.brand || null,
+      siteName: data.siteName || null,
+      description: data.description?.slice(0, 200) || null,
+      imageUrl: data.imageUrl || null,
+      currency: data.currency || "TRY",
+      message: data.name
+        ? `"${data.name}" bulundu${data.price ? ` — Fiyat: ${data.price} ${data.currency || "TRY"}` : ""}`
+        : "Ürün bilgisi çekilemedi, site bot koruması olabilir.",
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
+    return {
+      success: false,
+      url,
+      error: `Playwright scrape hatası: ${msg}`,
+    };
   }
 }
 

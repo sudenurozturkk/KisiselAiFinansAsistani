@@ -23,7 +23,56 @@ const MAX_BYTES = 200_000;
 const TIMEOUT_MS = 8_000;
 
 const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+/** Trendyol gibi CSR sitelerde HTML'den veri çekilemezse URL'den ürün adı parse et. */
+function parseProductNameFromUrl(url: string): string | undefined {
+  try {
+    const u = new URL(url);
+    // Trendyol: /marka/urun-adi-p-12345
+    if (u.hostname.includes("trendyol.com")) {
+      const match = u.pathname.match(/\/([^\/]+)-p-\d+/);
+      if (match?.[1]) {
+        return match[1]
+          .replace(/-/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+    }
+    // Hepsiburada: /urun-adi-p-12345
+    if (u.hostname.includes("hepsiburada.com")) {
+      const match = u.pathname.match(/\/([^\/]+)-p-/);
+      if (match?.[1]) {
+        return match[1]
+          .replace(/-/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** URL'den site adını çıkar. */
+function parseSiteNameFromUrl(url: string): string | undefined {
+  try {
+    const hostname = new URL(url).hostname.replace("www.", "");
+    const siteNames: Record<string, string> = {
+      "trendyol.com": "Trendyol",
+      "hepsiburada.com": "Hepsiburada",
+      "amazon.com.tr": "Amazon TR",
+      "n11.com": "n11",
+      "gittigidiyor.com": "GittiGidiyor",
+      "sahibinden.com": "Sahibinden",
+      "apple.com": "Apple",
+      "nike.com": "Nike",
+      "ikea.com.tr": "IKEA Türkiye",
+    };
+    return siteNames[hostname] || hostname;
+  } catch {
+    return undefined;
+  }
+}
 
 /* ─── Yardımcı: HTML decode (entities) ─────────────────────── */
 
@@ -469,6 +518,14 @@ export async function scrapeProductUrl(
       "i",
     );
     result.name = result.name.replace(suffix, "").trim();
+  }
+
+  // 5. URL-based fallback — CSR sitelerde (Trendyol vb.) HTML'den bilgi çekilemezse
+  if (!result.name) {
+    result.name = parseProductNameFromUrl(url);
+  }
+  if (!result.siteName) {
+    result.siteName = parseSiteNameFromUrl(url);
   }
 
   return result;

@@ -49,6 +49,7 @@ import type {
 import type { EmotionalInsight } from "@/lib/emotional";
 import type { SmartAlert } from "@/lib/smart-alerts";
 import type { DailyTip } from "@/lib/daily-tips";
+import type { MarketPrice } from "@/lib/market";
 
 export default function DashboardPage() {
   const [data, setData] = useState<TransactionsResponse | null>(null);
@@ -57,6 +58,7 @@ export default function DashboardPage() {
   const [mirrorRiskDays, setMirrorRiskDays] = useState<string[]>([]);
   const [alerts, setAlerts] = useState<SmartAlert[]>([]);
   const [tips, setTips] = useState<DailyTip[]>([]);
+  const [marketPrices, setMarketPrices] = useState<Record<string, MarketPrice>>({});
 
   useEffect(() => {
     (async () => {
@@ -75,6 +77,9 @@ export default function DashboardPage() {
         .catch(() => {});
       api.getDailyTips()
         .then((r) => setTips(r.tips || []))
+        .catch(() => {});
+      api.getMarketPrices("USD,EUR,XAU,BTC,THYAO,GARAN")
+        .then((r) => setMarketPrices(r.prices || {}))
         .catch(() => {});
     })();
   }, []);
@@ -141,6 +146,41 @@ export default function DashboardPage() {
             {alerts.slice(0, 4).map((alert) => (
               <AlertCard key={alert.id} alert={alert} />
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Piyasa Ticker */}
+      {Object.keys(marketPrices).length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 p-4 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp size={16} className="text-emerald-400" />
+            <span className="font-semibold text-white text-sm">Canlı Piyasa</span>
+            <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-medium ml-auto">
+              TwelveData
+            </span>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar" style={{ scrollbarWidth: "none" }}>
+            {Object.entries(marketPrices).map(([sym, p]) => {
+              const isUp = p.changePercent > 0;
+              const isDown = p.changePercent < 0;
+              return (
+                <div
+                  key={sym}
+                  className="flex-shrink-0 bg-white/5 backdrop-blur rounded-xl px-4 py-3 min-w-[140px] border border-white/10"
+                >
+                  <div className="text-[10px] text-slate-400 font-medium mb-0.5">{p.name || sym}</div>
+                  <div className="text-white font-bold text-lg leading-tight">
+                    {p.currency === "USD" ? "$" : p.currency === "TRY" ? "₺" : ""}
+                    {p.price > 1000 ? p.price.toLocaleString("tr-TR", { maximumFractionDigits: 0 }) : p.price.toLocaleString("tr-TR", { maximumFractionDigits: 2 })}
+                  </div>
+                  <div className={`text-xs font-medium mt-0.5 flex items-center gap-1 ${isUp ? "text-emerald-400" : isDown ? "text-rose-400" : "text-slate-400"}`}>
+                    {isUp ? <TrendingUp size={10} /> : isDown ? <TrendingDown size={10} /> : <Minus size={10} />}
+                    {isUp ? "+" : ""}{p.changePercent?.toFixed(2) || "0.00"}%
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

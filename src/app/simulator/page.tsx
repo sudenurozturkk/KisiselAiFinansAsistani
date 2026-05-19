@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
 import { simulateScenario, getCategoryAverages } from "@/lib/simulator";
 import type { ScenarioInput, ScenarioResult } from "@/lib/simulator";
@@ -14,8 +14,12 @@ import {
   PiggyBank,
   Lightbulb,
   ArrowRight,
+  Sparkles,
+  Loader2,
+  Brain,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui";
+import Markdown from "@/components/Markdown";
 
 export default function SimulatorPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -25,6 +29,9 @@ export default function SimulatorPage() {
   const [incomeBoost, setIncomeBoost] = useState("");
   const [oneTimeExpense, setOneTimeExpense] = useState("");
   const [horizon, setHorizon] = useState(12);
+  const [aiAnalysis, setAiAnalysis] = useState<string>("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -49,7 +56,52 @@ export default function SimulatorPage() {
       monthsHorizon: horizon,
     };
     return simulateScenario(input, user, transactions, summary);
-  }, [adjustments, incomeBoost, oneTimeExpense, horizon, user, transactions, summary]);
+  }, [
+    adjustments,
+    incomeBoost,
+    oneTimeExpense,
+    horizon,
+    user,
+    transactions,
+    summary,
+  ]);
+
+  // Senaryo değişince AI analizi tetikle (800ms debounce)
+  const triggerAiAnalysis = useCallback(() => {
+    if (!user) return;
+    const hasChanges =
+      Object.keys(adjustments).some((k) => adjustments[k] !== 0) ||
+      !!incomeBoost ||
+      !!oneTimeExpense;
+    if (!hasChanges) {
+      setAiAnalysis("");
+      return;
+    }
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setAiLoading(true);
+      try {
+        const res = await api.analyzeScenario({
+          adjustments: Object.fromEntries(
+            Object.entries(adjustments).filter(([, v]) => v !== 0),
+          ),
+          incomeBoost: incomeBoost ? Number(incomeBoost) : undefined,
+          oneTimeExpense: oneTimeExpense ? Number(oneTimeExpense) : undefined,
+          horizon,
+        });
+        setAiAnalysis(res.aiAnalysis || "");
+      } catch {
+        setAiAnalysis("");
+      } finally {
+        setAiLoading(false);
+      }
+    }, 800);
+  }, [adjustments, incomeBoost, oneTimeExpense, horizon, user]);
+
+  useEffect(() => {
+    triggerAiAnalysis();
+  }, [triggerAiAnalysis]);
 
   function setAdjustment(cat: string, value: number) {
     setAdjustments((prev) => ({ ...prev, [cat]: value }));
@@ -60,6 +112,7 @@ export default function SimulatorPage() {
     setIncomeBoost("");
     setOneTimeExpense("");
     setHorizon(12);
+    setAiAnalysis("");
   }
 
   if (!user || !summary || !result) {
@@ -75,6 +128,10 @@ export default function SimulatorPage() {
   }
 
   const { baseline, scenario, delta, goalMonths, insights } = result;
+  const hasChanges =
+    Object.keys(adjustments).some((k) => adjustments[k] !== 0) ||
+    !!incomeBoost ||
+    !!oneTimeExpense;
 
   return (
     <div className="space-y-6">
@@ -85,8 +142,7 @@ export default function SimulatorPage() {
             Senaryo Simülatörü
           </h1>
           <p className="text-slate-500 text-sm mt-0.5">
-            "Eğer şu olsa…" sorularını AI'a sormadan, anlık olarak cevapla. Kategori
-            harcamalarını ayarla ve etkisini gör.
+            Kategori harcamalarını ayarla, AI anlık yorum üretsin.
           </p>
         </div>
         <button onClick={reset} className="btn-ghost">
@@ -100,7 +156,8 @@ export default function SimulatorPage() {
           <div>
             <h3 className="font-semibold text-sm mb-1">Kategori Harcaması</h3>
             <p className="text-xs text-slate-500 mb-3">
-              Slider'larla harcamalarını yüzde olarak değiştir (-100 ile +100 arası).
+              Slider'larla harcamalarını yüzde olarak değiştir (-100 ile +100
+              arası).
             </p>
             {categoryAverages.length === 0 ? (
               <p className="text-xs text-slate-500">
@@ -175,7 +232,11 @@ export default function SimulatorPage() {
               label="Senaryo net"
               value={scenario.monthlyNet}
               tone={
-                delta.netDiff > 0 ? "good" : delta.netDiff < 0 ? "bad" : "default"
+                delta.netDiff > 0
+                  ? "good"
+                  : delta.netDiff < 0
+                    ? "bad"
+                    : "default"
               }
               delta={delta.netDiff}
             />
@@ -230,11 +291,44 @@ export default function SimulatorPage() {
             </div>
           )}
 
-          {/* AI insights */}
+          {/* AI Analizi (Gemini) */}
+          {hasChanges && (
+            <div className="card border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white space-y-2">
+              <h3 className="font-semibold text-sm flex items-center gap-2 text-indigo-700">
+                {aiLoading ? (
+                  <Loader2
+                    size={16}
+                    className="animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Brain size={16} aria-hidden="true" />
+                )}
+                Gemini AI Analizi
+              </h3>
+              {aiLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-5/6" />
+                  <Skeleton className="h-4 w-4/6" />
+                </div>
+              ) : aiAnalysis ? (
+                <div className="text-sm text-slate-700 leading-relaxed">
+                  <Markdown text={aiAnalysis} />
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* Matematiksel çıkarımlar */}
           {insights.length > 0 && (
             <div className="card space-y-2">
               <h3 className="font-semibold text-sm flex items-center gap-2">
-                <Lightbulb size={16} className="text-amber-500" aria-hidden="true" />
+                <Lightbulb
+                  size={16}
+                  className="text-amber-500"
+                  aria-hidden="true"
+                />
                 Çıkarımlar
               </h3>
               <ul className="space-y-2">
@@ -350,11 +444,7 @@ function ComparisonCard({
             delta > 0 ? "text-emerald-600" : "text-rose-600"
           }`}
         >
-          {delta > 0 ? (
-            <TrendingUp size={12} />
-          ) : (
-            <TrendingDown size={12} />
-          )}
+          {delta > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
           {delta > 0 ? "+" : ""}
           {formatTRY(delta)} fark
         </div>

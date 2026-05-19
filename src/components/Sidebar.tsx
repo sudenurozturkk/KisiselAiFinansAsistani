@@ -14,6 +14,8 @@ import {
   Target,
   LogOut,
   Landmark,
+  FileText,
+  Receipt,
   type LucideIcon,
 } from "lucide-react";
 import { Avatar, Skeleton } from "./ui";
@@ -35,6 +37,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/products", label: "İstek Listesi", icon: ShoppingBag },
   { href: "/recommendations", label: "Öneriler", icon: Sparkles },
   { href: "/simulator", label: "Senaryo", icon: Target },
+  { href: "/reports", label: "Raporlar", icon: FileText },
+  { href: "/statements", label: "Harcamalar", icon: Receipt },
   { href: "/subscriptions", label: "Abonelikler", icon: CreditCard },
   { href: "/chat", label: "AI Sohbet", icon: MessageSquare },
   { href: "/literacy", label: "Okuryazarlık", icon: Brain },
